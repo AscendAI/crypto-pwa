@@ -1141,10 +1141,10 @@
       } else {
         document.getElementById('login-screen').style.display = 'flex';
         document.getElementById('app').style.display = 'none';
-        S = { trades: [], prices: {}, priceStatus: "", lastUpdated: null, pnlHistory: {}, view: "portfolio", selectedCoin: COINS[0], editingPrice: null, deleteConfirm: null, showPicker: false, priceLoading: false, editTradeId: null, tradeType: "buy", calMonth: new Date().getMonth(), calYear: new Date().getFullYear() };
+        S = { trades: [], prices: {}, priceStatus: "", lastUpdated: null, pnlHistory: {}, view: "portfolio", selectedCoin: COINS[0], editingPrice: null, deleteConfirm: null, showPicker: false, priceLoading: false, editTradeId: null, tradeType: "buy", calMonth: new Date().getMonth(), calYear: new Date().getFullYear(), calMode: "realized" };
       }
     });
-    let S = { trades: [], prices: {}, priceStatus: "", lastUpdated: null, pnlHistory: {}, view: "portfolio", selectedCoin: COINS[0], editingPrice: null, deleteConfirm: null, showPicker: false, priceLoading: false, editTradeId: null, tradeType: "buy", calMonth: new Date().getMonth(), calYear: new Date().getFullYear() };
+    let S = { trades: [], prices: {}, priceStatus: "", lastUpdated: null, pnlHistory: {}, view: "portfolio", selectedCoin: COINS[0], editingPrice: null, deleteConfirm: null, showPicker: false, priceLoading: false, editTradeId: null, tradeType: "buy", calMonth: new Date().getMonth(), calYear: new Date().getFullYear(), calMode: "realized" };
 
     let _saveTimer = null;
     function save() {
@@ -1354,7 +1354,8 @@
     function renderCal(el) {
       const yr = S.calYear, mo = S.calMonth, dim = new Date(yr, mo + 1, 0).getDate(), fd = new Date(yr, mo, 1).getDay();
       const mn = new Date(yr, mo).toLocaleString('default', { month: 'long', year: 'numeric' }); const tds = td();
-      const dp = {}; for (const [date, data] of Object.entries(S.pnlHistory)) { const d = new Date(date); if (d.getMonth() === mo && d.getFullYear() === yr) dp[d.getDate()] = data.pnl }
+      const mode = S.calMode || "realized";
+      const dp = {}; for (const [date, data] of Object.entries(S.pnlHistory)) { const d = new Date(date); if (d.getMonth() === mo && d.getFullYear() === yr) dp[d.getDate()] = mode === "realized" ? (data.realized || 0) : mode === "unrealized" ? (data.unrealized || 0) : data.pnl }
       const mp = Object.values(dp).reduce((s, v) => s + v, 0), wd = Object.values(dp).filter(v => v > 0).length, ld = Object.values(dp).filter(v => v < 0).length;
       let g = '';['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach(d => { g += '<div class="cal-day-label">' + d + '</div>' });
       for (let i = 0; i < fd; i++)g += '<div class="cal-cell empty"></div>';
@@ -1362,7 +1363,9 @@
         const ds = yr + '-' + String(mo + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'); const it = ds === tds; const p = dp[d]; const hd = p !== undefined;
         g += '<div class="cal-cell ' + (hd ? (p >= 0 ? 'profit' : 'loss') : 'no-data') + ' ' + (it ? 'today' : '') + '"><div class="cal-date">' + d + '</div>' + (hd ? '<div class="cal-pnl ' + col(p) + '">' + fmtS(p) + '</div>' : '') + '</div>'
       }
-      el.innerHTML = '<div class="cal-header"><h2 class="form-title" style="margin-bottom:0">PnL Calendar</h2><div class="cal-nav"><button class="cal-arrow" onclick="S.calMonth--;if(S.calMonth<0){S.calMonth=11;S.calYear--}render()">‹</button><div class="cal-month">' + mn + '</div><button class="cal-arrow" onclick="S.calMonth++;if(S.calMonth>11){S.calMonth=0;S.calYear++}render()">›</button></div></div><div class="cal-grid">' + g + '</div><div class="cal-summary"><div class="cal-stat"><div class="cal-stat-label">MONTH PNL</div><div class="cal-stat-val ' + col(mp) + '">' + fmt(Math.abs(mp)) + '</div></div><div class="cal-stat"><div class="cal-stat-label">WIN DAYS</div><div class="cal-stat-val green">' + wd + '</div></div><div class="cal-stat"><div class="cal-stat-label">LOSS DAYS</div><div class="cal-stat-val red">' + ld + '</div></div></div><div style="margin-top:12px;padding:11px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--text3);line-height:1.6"><span style="color:var(--green)">Tip:</span> Tap ↻ daily to record PnL snapshots and fill the calendar.</div>'
+      const modeToggle = '<div class="type-toggle" style="margin-bottom:14px"><button class="type-btn ' + (mode === 'realized' ? 'active-buy' : '') + '" onclick="S.calMode=\'realized\';render()">REALIZED</button><button class="type-btn ' + (mode === 'unrealized' ? 'active-buy' : '') + '" onclick="S.calMode=\'unrealized\';render()">UNREALIZED</button><button class="type-btn ' + (mode === 'total' ? 'active-buy' : '') + '" onclick="S.calMode=\'total\';render()">TOTAL</button></div>';
+      const modeLabel = mode === 'realized' ? 'REALIZED PNL' : mode === 'unrealized' ? 'UNREALIZED PNL' : 'TOTAL PNL';
+      el.innerHTML = '<div class="cal-header"><h2 class="form-title" style="margin-bottom:0">PnL Calendar</h2><div class="cal-nav"><button class="cal-arrow" onclick="S.calMonth--;if(S.calMonth<0){S.calMonth=11;S.calYear--}render()">‹</button><div class="cal-month">' + mn + '</div><button class="cal-arrow" onclick="S.calMonth++;if(S.calMonth>11){S.calMonth=0;S.calYear++}render()">›</button></div></div>' + modeToggle + '<div class="cal-grid">' + g + '</div><div class="cal-summary"><div class="cal-stat"><div class="cal-stat-label">MONTH ' + modeLabel + '</div><div class="cal-stat-val ' + col(mp) + '">' + fmt(Math.abs(mp)) + '</div></div><div class="cal-stat"><div class="cal-stat-label">WIN DAYS</div><div class="cal-stat-val green">' + wd + '</div></div><div class="cal-stat"><div class="cal-stat-label">LOSS DAYS</div><div class="cal-stat-val red">' + ld + '</div></div></div><div style="margin-top:12px;padding:11px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--text3);line-height:1.6"><span style="color:var(--green)">Tip:</span> Tap ↻ daily to record PnL snapshots and fill the calendar.</div>'
     }
 
     function renderAna(el) {
