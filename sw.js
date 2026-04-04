@@ -18,6 +18,11 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   // Network-first for API calls
+  // Skip caching for Firebase and Google auth
+  if (url.hostname.includes('firebaseapp') || url.hostname.includes('googleapis.com') || url.hostname.includes('gstatic.com') || url.hostname.includes('firestore.googleapis.com') || url.hostname.includes('identitytoolkit') || url.hostname.includes('accounts.google')) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
   if (url.hostname.includes('coingecko') || url.hostname.includes('coincap') || url.hostname.includes('binance')) {
     e.respondWith(
       fetch(e.request).catch(() => caches.match(e.request))
