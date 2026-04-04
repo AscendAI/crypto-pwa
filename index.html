@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cryptofolio">
+<link rel="manifest" href="manifest.json">
+<title>Cryptofolio</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+:root{--bg:#0d1117;--card:#161b22;--card2:#1c2333;--border:#21262d;--border2:#30363d;--text:#e6edf3;--text2:#c9d1d9;--text3:#8b949e;--text4:#6e7681;--green:#00ff88;--green2:#00cc6a;--red:#ff4b4b;--blue:#60a5fa;--yellow:#f0c040;--purple:#a78bfa;--mono:'JetBrains Mono',monospace;--sans:'DM Sans',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100dvh;overflow-x:hidden}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none}
+input[type=number]{-moz-appearance:textfield}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+#app{max-width:430px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column;position:relative}
+.header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;padding-top:max(14px,env(safe-area-inset-top));border-bottom:1px solid var(--card);background:rgba(13,17,23,0.95);position:sticky;top:0;z-index:10;backdrop-filter:blur(12px)}
+.header-left{display:flex;align-items:center;gap:10px}
+.logo{font-size:24px;color:var(--green);filter:drop-shadow(0 0 8px rgba(0,255,136,0.4))}
+.app-name{font-size:13px;font-weight:700;letter-spacing:3px;font-family:var(--mono)}
+.refresh-btn{background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.15);color:var(--green);width:34px;height:34px;border-radius:10px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+.refresh-btn:active{background:rgba(0,255,136,0.2)}
+.refresh-btn.spinning span{animation:spin .8s linear infinite;display:inline-block}
+.content{flex:1;padding:14px 16px 100px;overflow-y:auto}
+.hidden{display:none!important}
+
+.bal-card{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;padding:22px 18px;margin-bottom:16px;animation:fadeIn .3s}
+.bal-label{font-size:10px;color:var(--text3);letter-spacing:2px;font-family:var(--mono);margin-bottom:4px}
+.bal-amt{font-size:32px;font-weight:700;letter-spacing:-1px;font-family:var(--mono)}
+.pnl-row{display:flex;gap:10px;align-items:center;margin-top:5px}
+.pnl-badge{padding:3px 9px;border-radius:7px;font-size:12px;font-weight:600;font-family:var(--mono)}
+.pnl-pct{font-size:13px;font-weight:600;font-family:var(--mono)}
+.pnl-detail{display:flex;gap:14px;margin-top:8px;font-size:11px;font-family:var(--mono);flex-wrap:wrap}
+.pnl-detail span{display:flex;align-items:center;gap:4px}
+.status-bar{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:10px;color:var(--text3);font-family:var(--mono)}
+.status-bar .time{margin-left:auto;opacity:.5;font-size:9px}
+.mini-spinner{width:11px;height:11px;border:2px solid var(--border);border-top:2px solid var(--blue);border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:14px;margin-bottom:8px;position:relative;animation:fadeIn .3s}
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.sym{font-size:15px;font-weight:700;font-family:var(--mono)}.coin-nm{font-size:12px;color:var(--text3);margin-left:7px}
+.card-val{font-size:16px;font-weight:700;font-family:var(--mono);text-align:right}
+.card-pnl{font-size:11px;font-family:var(--mono);margin-top:2px;text-align:right}
+.card-bottom{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;padding-top:10px;border-top:1px solid var(--border)}
+.s-label{font-size:8px;color:var(--text4);letter-spacing:1px;font-family:var(--mono)}
+.s-val{font-size:11px;color:var(--text2);font-weight:500;font-family:var(--mono);margin-top:2px}
+.s-val.editable{cursor:pointer;border-bottom:1px dashed var(--border2);padding-bottom:1px}
+.mini-edit{display:flex;gap:3px;align-items:center;margin-top:2px}
+.mini-input{width:60px;padding:2px 5px;background:var(--bg);border:1px solid var(--green);border-radius:5px;color:var(--text);font-size:10px;font-family:var(--mono);outline:none}
+.mini-btn{background:rgba(0,255,136,.15);border:1px solid rgba(0,255,136,.3);color:var(--green);border-radius:5px;padding:1px 6px;cursor:pointer;font-size:11px;font-family:var(--mono)}
+
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:50px 20px;text-align:center}
+
+.form-title{font-size:18px;font-weight:700;margin-bottom:18px;letter-spacing:-.5px;font-family:var(--mono)}
+.field{margin-bottom:16px;position:relative}
+.label{display:block;font-size:10px;color:var(--text3);letter-spacing:1.5px;margin-bottom:6px;font-family:var(--mono)}
+.input{width:100%;padding:12px 14px;background:var(--card);border:1px solid var(--border2);border-radius:11px;color:var(--text);font-size:15px;font-family:var(--mono);outline:none;transition:border-color .2s}
+.input:focus{border-color:var(--green)}
+.picker-btn{width:100%;padding:12px 14px;background:var(--card);border:1px solid var(--border2);border-radius:11px;color:var(--text);font-size:14px;font-family:var(--mono);cursor:pointer;display:flex;justify-content:space-between;align-items:center;text-align:left}
+.dropdown{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border2);border-radius:11px;margin-top:4px;z-index:20;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+.dropdown input{width:100%;padding:10px 14px;background:var(--bg);border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:13px;font-family:var(--mono);outline:none}
+.coin-list{max-height:180px;overflow-y:auto}
+.coin-opt{width:100%;padding:10px 14px;background:transparent;border:none;border-left:2px solid transparent;color:var(--text);font-size:13px;font-family:var(--mono);cursor:pointer;text-align:left;display:flex;align-items:center}
+.coin-opt.sel{background:rgba(0,255,136,.07);border-left-color:var(--green)}
+.cost-preview{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:rgba(0,255,136,.04);border:1px solid rgba(0,255,136,.1);border-radius:11px;margin-bottom:16px;font-size:13px}
+.cost-preview.sell{background:rgba(255,75,75,.04);border-color:rgba(255,75,75,.1)}
+.primary-btn{width:100%;padding:14px;background:linear-gradient(135deg,var(--green),var(--green2));border:none;border-radius:13px;color:var(--bg);font-size:14px;font-weight:700;font-family:var(--mono);letter-spacing:1px;cursor:pointer;text-transform:uppercase}
+.primary-btn:disabled{opacity:.4}
+.primary-btn.sell-btn{background:linear-gradient(135deg,var(--red),#cc3b3b)}
+.ghost-btn{background:rgba(139,148,158,.08);border:1px solid rgba(139,148,158,.15);color:var(--text3);padding:10px 14px;border-radius:10px;font-size:12px;cursor:pointer;font-weight:600;font-family:var(--mono)}
+
+/* Buy/Sell Toggle */
+.type-toggle{display:flex;gap:0;border-radius:11px;overflow:hidden;border:1px solid var(--border2);margin-bottom:0}
+.type-btn{flex:1;padding:11px;text-align:center;font-size:13px;font-weight:700;font-family:var(--mono);cursor:pointer;border:none;background:var(--card);color:var(--text3);transition:all .2s;letter-spacing:1px}
+.type-btn.active-buy{background:rgba(0,255,136,.12);color:var(--green);box-shadow:inset 0 -2px 0 var(--green)}
+.type-btn.active-sell{background:rgba(255,75,75,.12);color:var(--red);box-shadow:inset 0 -2px 0 var(--red)}
+
+/* Trade type badges */
+.trade-badge{display:inline-block;padding:2px 7px;border-radius:5px;font-size:9px;font-weight:700;font-family:var(--mono);letter-spacing:1px;margin-left:8px}
+.trade-badge.buy{background:rgba(0,255,136,.12);color:var(--green)}
+.trade-badge.sell{background:rgba(255,75,75,.12);color:var(--red)}
+
+.actions{display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.act-btn{flex:1;padding:7px;border-radius:8px;font-size:11px;font-weight:600;font-family:var(--mono);cursor:pointer;text-align:center;border:1px solid}
+.act-edit{background:rgba(96,165,250,.1);border-color:rgba(96,165,250,.2);color:var(--blue)}
+.act-del{background:rgba(255,75,75,.1);border-color:rgba(255,75,75,.2);color:var(--red)}
+.del-confirm{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.yes-btn,.no-btn{padding:5px 14px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600;font-family:var(--mono)}
+.yes-btn{background:rgba(255,75,75,.15);border:1px solid rgba(255,75,75,.3);color:var(--red)}
+.no-btn{background:rgba(139,148,158,.1);border:1px solid rgba(139,148,158,.2);color:var(--text3)}
+.clear-btn{background:rgba(255,75,75,.1);border:1px solid rgba(255,75,75,.2);color:var(--red);padding:5px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600;font-family:var(--mono)}
+
+.cal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.cal-nav{display:flex;align-items:center;gap:12px}
+.cal-arrow{background:var(--card);border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.cal-month{font-size:14px;font-weight:700;font-family:var(--mono);min-width:130px;text-align:center}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:14px}
+.cal-day-label{text-align:center;font-size:8px;color:var(--text4);font-family:var(--mono);padding:4px 0;letter-spacing:1px}
+.cal-cell{aspect-ratio:1;border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono);min-height:42px}
+.cal-cell.empty{background:transparent}.cal-cell.no-data{background:var(--card);border:1px solid var(--border)}
+.cal-cell.profit{background:rgba(0,255,136,.1);border:1px solid rgba(0,255,136,.2)}
+.cal-cell.loss{background:rgba(255,75,75,.1);border:1px solid rgba(255,75,75,.2)}
+.cal-cell.today{box-shadow:inset 0 0 0 2px var(--green)}
+.cal-date{font-size:11px;font-weight:600;color:var(--text2)}.cal-pnl{font-size:7px;font-weight:600;margin-top:1px}
+.cal-summary{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.cal-stat{text-align:center}.cal-stat-label{font-size:8px;color:var(--text4);font-family:var(--mono);letter-spacing:1px}
+.cal-stat-val{font-size:14px;font-weight:700;font-family:var(--mono);margin-top:3px}
+
+.analytics-card{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:16px;margin-bottom:12px;animation:fadeIn .3s}
+.analytics-title{font-size:11px;color:var(--text3);letter-spacing:1.5px;font-family:var(--mono);margin-bottom:12px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.stat-box{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:11px}
+.stat-box-label{font-size:8px;color:var(--text4);letter-spacing:1px;font-family:var(--mono)}
+.stat-box-val{font-size:17px;font-weight:700;font-family:var(--mono);margin-top:3px}
+.stat-box-sub{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px}
+.alloc-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;margin-bottom:10px;background:var(--border)}
+.alloc-item{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;font-family:var(--mono)}
+.alloc-item:last-child{border-bottom:none}
+.alloc-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px}
+.perf-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)}.perf-row:last-child{border-bottom:none}
+
+.nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;display:flex;justify-content:space-around;padding:8px 0;padding-bottom:max(16px,env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(13,17,23,.9),#0d1117 30%);backdrop-filter:blur(16px);border-top:1px solid var(--card);z-index:10}
+.nav-btn{background:transparent;border:none;display:flex;flex-direction:column;align-items:center;cursor:pointer;font-family:var(--mono);font-weight:600;padding:3px 10px;color:var(--text3);transition:color .2s}
+.nav-btn.active{color:var(--green)}
+.nav-btn .icon{font-size:20px;line-height:1}.nav-btn .lbl{font-size:9px;margin-top:2px;letter-spacing:.5px}
+.green{color:var(--green)}.red{color:var(--red)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header"><div class="header-left"><span class="logo">◈</span><span class="app-name">CRYPTOFOLIO</span></div>
+    <button class="refresh-btn hidden" id="refreshBtn" onclick="fetchPrices()"><span>↻</span></button></div>
+  <div class="content" id="content"></div>
+  <div class="nav">
+    <button class="nav-btn active" data-view="portfolio" onclick="go('portfolio')"><span class="icon">◧</span><span class="lbl">Portfolio</span></button>
+    <button class="nav-btn" data-view="calendar" onclick="go('calendar')"><span class="icon">▦</span><span class="lbl">Calendar</span></button>
+    <button class="nav-btn" data-view="add" onclick="go('add')"><span class="icon">＋</span><span class="lbl">Trade</span></button>
+    <button class="nav-btn" data-view="analytics" onclick="go('analytics')"><span class="icon">◔</span><span class="lbl">Analytics</span></button>
+    <button class="nav-btn" data-view="history" onclick="go('history')"><span class="icon">☰</span><span class="lbl">History</span></button>
+  </div>
+</div>
+<script>
+const COINS=[{id:"bitcoin",symbol:"BTC",name:"Bitcoin"},{id:"ethereum",symbol:"ETH",name:"Ethereum"},{id:"solana",symbol:"SOL",name:"Solana"},{id:"ripple",symbol:"XRP",name:"XRP"},{id:"cardano",symbol:"ADA",name:"Cardano"},{id:"dogecoin",symbol:"DOGE",name:"Dogecoin"},{id:"polkadot",symbol:"DOT",name:"Polkadot"},{id:"avalanche-2",symbol:"AVAX",name:"Avalanche"},{id:"chainlink",symbol:"LINK",name:"Chainlink"},{id:"matic-network",symbol:"POL",name:"Polygon"},{id:"litecoin",symbol:"LTC",name:"Litecoin"},{id:"tron",symbol:"TRX",name:"TRON"},{id:"shiba-inu",symbol:"SHIB",name:"Shiba Inu"},{id:"pepe",symbol:"PEPE",name:"Pepe"},{id:"sui",symbol:"SUI",name:"Sui"},{id:"binancecoin",symbol:"BNB",name:"BNB"},{id:"near",symbol:"NEAR",name:"NEAR"},{id:"aptos",symbol:"APT",name:"Aptos"},{id:"render-token",symbol:"RENDER",name:"Render"},{id:"injective-protocol",symbol:"INJ",name:"Injective"}];
+const COLORS=["#00ff88","#60a5fa","#f59e0b","#a78bfa","#f472b6","#fb923c","#34d399","#818cf8","#fbbf24","#e879f9"];
+let S={trades:[],prices:{},priceStatus:"",lastUpdated:null,pnlHistory:{},view:"portfolio",selectedCoin:COINS[0],editingPrice:null,deleteConfirm:null,showPicker:false,priceLoading:false,editTradeId:null,tradeType:"buy",calMonth:new Date().getMonth(),calYear:new Date().getFullYear()};
+
+function save(){try{localStorage.setItem("cryptofolio-v3",JSON.stringify({trades:S.trades,prices:S.prices,priceStatus:S.priceStatus,lastUpdated:S.lastUpdated,pnlHistory:S.pnlHistory}))}catch(e){}}
+function load(){try{const d=JSON.parse(localStorage.getItem("cryptofolio-v3"));if(d){S.trades=d.trades||[];S.prices=d.prices||{};S.priceStatus=d.priceStatus||"";S.lastUpdated=d.lastUpdated||null;S.pnlHistory=d.pnlHistory||{}}}catch(e){}}
+function fmt(v){if(v==null||isNaN(v)||v===0)return"$0.00";if(Math.abs(v)<.01)return"$"+v.toFixed(8);if(Math.abs(v)>=1e6)return"$"+(v/1e6).toFixed(2)+"M";return"$"+v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fmtS(v){if(v==null||isNaN(v)||v===0)return"$0";const a=Math.abs(v),s=v>=0?"+":"-";if(a>=1e6)return s+"$"+(a/1e6).toFixed(1)+"M";if(a>=1e3)return s+"$"+(a/1e3).toFixed(1)+"K";return s+"$"+a.toFixed(0)}
+function fmtPct(v){return v==null||isNaN(v)?"—":(v>=0?"+":"")+v.toFixed(2)+"%"}
+function col(v){return v>=0?"green":"red"}
+function td(){return new Date().toISOString().split("T")[0]}
+
+async function fetchPrices(){
+  if(!S.trades.length)return;const ids=[...new Set(S.trades.map(t=>t.coinId))];
+  S.priceLoading=true;render();
+  try{const r=await fetch("https://api.coingecko.com/api/v3/simple/price?ids="+ids.join(",")+"&vs_currencies=usd&include_24hr_change=true");if(!r.ok)throw 0;const d=await r.json();
+    ids.forEach(id=>{if(d[id])S.prices[id]={usd:d[id].usd,change24h:d[id].usd_24h_change||0}});S.priceStatus="Live · CoinGecko";S.lastUpdated=new Date().toLocaleString();recordPnl();S.priceLoading=false;save();render();return}catch(e){}
+  try{const r=await fetch("https://api.coincap.io/v2/assets?ids="+ids.join(","));if(!r.ok)throw 0;const j=await r.json();
+    (j.data||[]).forEach(a=>{const c=COINS.find(x=>x.id===a.id||x.name.toLowerCase()===a.name.toLowerCase());if(c)S.prices[c.id]={usd:parseFloat(a.priceUsd),change24h:parseFloat(a.changePercent24Hr)||0}});S.priceStatus="Live · CoinCap";S.lastUpdated=new Date().toLocaleString();recordPnl();S.priceLoading=false;save();render();return}catch(e){}
+  S.priceStatus=Object.keys(S.prices).length?"Offline · last prices":"Offline · set manually";S.priceLoading=false;save();render()
+}
+
+function recordPnl(){const r=calcPnl();S.pnlHistory[td()]={pnl:r.totalPnl,realized:r.realized,unrealized:r.unrealized,value:r.totalValue};save()}
+
+// Core PnL calculation with FIFO for realized gains
+function calcPnl(){
+  const byC={};
+  S.trades.forEach(t=>{if(!byC[t.coinId])byC[t.coinId]={buys:[],sells:[],coinId:t.coinId,symbol:t.symbol,name:t.name};
+    if(t.type==='sell')byC[t.coinId].sells.push({...t});else byC[t.coinId].buys.push({...t})});
+  let realized=0,totalCost=0,totalValue=0;
+  const holdings=[];
+  for(const cid in byC){
+    const c=byC[cid];const ch=S.prices[cid]?.change24h||0;
+    // FIFO: match sells against buys
+    let buyQ=[...c.buys.map(b=>({amt:b.amount,price:b.buyPrice}))];
+    let coinRealized=0;
+    c.sells.forEach(s=>{let sellAmt=s.amount;
+      while(sellAmt>0&&buyQ.length){const lot=buyQ[0];const used=Math.min(lot.amt,sellAmt);
+        coinRealized+=(s.buyPrice-lot.price)*used;
+        lot.amt-=used;sellAmt-=used;if(lot.amt<=0)buyQ.shift()}});
+    realized+=coinRealized;
+    const remAmt=buyQ.reduce((s,l)=>s+l.amt,0);const remCost=buyQ.reduce((s,l)=>s+l.amt*l.price,0);
+    const avgBuy=remAmt>0?remCost/remAmt:0;
+    // Use live price, fallback to avg buy price so value isn't $0
+    const hasLive=S.prices[cid]?.usd!=null;const cp=hasLive?S.prices[cid].usd:avgBuy;
+    if(remAmt>0||coinRealized!==0){
+      const cv=remAmt*cp;const unrealPnl=cv-remCost;const pp=remCost>0?(unrealPnl/remCost)*100:0;
+      holdings.push({coinId:cid,symbol:c.symbol,name:c.name,ta:remAmt,tc:remCost,currentPrice:cp,hasLive,change24h:ch,cv,pnl:unrealPnl,pp,avg:avgBuy,realized:coinRealized});
+      totalCost+=remCost;totalValue+=cv}
+  }
+  const unrealized=totalValue-totalCost;const totalAccount=totalValue+realized;
+  return{holdings:holdings.sort((a,b)=>b.cv-a.cv),realized,unrealized,totalPnl:realized+unrealized,totalValue,totalCost,totalAccount}
+}
+
+function go(v){S.view=v;S.showPicker=false;S.editingPrice=null;S.deleteConfirm=null;S.editTradeId=null;S._ei=false;if(v==='add')S.tradeType='buy';
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===v));render()}
+function setMP(cid){const i=document.getElementById('pi-'+cid);if(!i)return;const v=parseFloat(i.value);if(isNaN(v)||v<0)return;
+  S.prices[cid]={usd:v,change24h:S.prices[cid]?.change24h||0};S.priceStatus="Manual";S.lastUpdated=new Date().toLocaleString();S.editingPrice=null;recordPnl();save();render()}
+
+function render(){
+  const el=document.getElementById('content'),rb=document.getElementById('refreshBtn');
+  rb.classList.toggle('hidden',!S.trades.length);rb.classList.toggle('spinning',S.priceLoading);
+  ({portfolio:renderPort,add:renderForm,history:renderHist,calendar:renderCal,analytics:renderAna})[S.view](el)
+}
+
+function renderPort(el){
+  const r=calcPnl(),it=r.holdings;
+  if(!S.trades.length){el.innerHTML='<div class="empty"><div style="font-size:48px;color:var(--border);margin-bottom:14px">◈</div><div style="font-size:17px;font-weight:600;margin-bottom:8px">No trades yet</div><div style="font-size:13px;color:var(--text3)">Tap <span class="green">+ Trade</span> to start</div></div>';return}
+  const anyNoLive=it.some(i=>i.ta>0&&!i.hasLive);
+  let sh=S.priceLoading?'<div class="mini-spinner"></div><span style="color:var(--blue)">Fetching…</span>'
+    :'<span style="font-size:7px;color:'+(S.priceStatus.startsWith("Live")?"var(--green)":"var(--yellow)")+'">⬤</span><span>'+(S.priceStatus||'Tap ↻')+'</span>'+(S.lastUpdated?'<span class="time">'+S.lastUpdated+'</span>':'');
+  let h='<div class="bal-card"><div class="bal-label">ACCOUNT VALUE</div><div class="bal-amt">'+fmt(r.totalAccount)+'</div><div class="pnl-row"><span class="pnl-badge" style="background:'+(r.totalPnl>=0?'rgba(0,255,136,.12)':'rgba(255,75,75,.12)')+';color:var(--'+col(r.totalPnl)+')">'+(r.totalPnl>=0?'▲':'▼')+' '+fmt(Math.abs(r.totalPnl))+'</span><span class="pnl-pct '+col(r.totalPnl)+'">'+fmtPct(r.totalCost>0?(r.totalPnl/r.totalCost)*100:0)+'</span></div>';
+  h+='<div class="pnl-detail"><span><span style="color:var(--text4)">Holdings:</span> <span>'+fmt(r.totalValue)+'</span></span><span><span style="color:var(--text4)">Realized:</span> <span class="'+col(r.realized)+'">'+fmt(r.realized)+'</span></span><span><span style="color:var(--text4)">Unrealized:</span> <span class="'+col(r.unrealized)+'">'+fmt(r.unrealized)+'</span></span></div>';
+  if(anyNoLive)h+='<div style="margin-top:8px;font-size:10px;color:var(--yellow);font-family:var(--mono)">⚠ Some prices using buy price as estimate — tap ↻ or set manually</div>';
+  h+='<div class="status-bar">'+sh+'</div></div>';
+  it.forEach(i=>{if(i.ta<=0&&i.realized===0)return;let pc;
+    if(i.ta>0){if(S.editingPrice===i.coinId)pc='<div class="mini-edit"><input class="mini-input" id="pi-'+i.coinId+'" type="number" step="any" value="'+(i.currentPrice||'')+'" placeholder="0" onkeydown="if(event.key===\'Enter\')setMP(\''+i.coinId+'\');if(event.key===\'Escape\'){S.editingPrice=null;render()}"><button class="mini-btn" onclick="setMP(\''+i.coinId+'\')">✓</button></div>';
+    else pc='<div class="s-val editable" onclick="S.editingPrice=\''+i.coinId+'\';render();setTimeout(()=>{const x=document.getElementById(\'pi-'+i.coinId+'\');if(x)x.focus()},50)">'+(i.hasLive?fmt(i.currentPrice):'<span style="color:var(--yellow)">'+fmt(i.currentPrice)+'*</span>')+'</div>'}else pc='<div class="s-val">—</div>';
+    const totalPnl=i.pnl+i.realized;
+    h+='<div class="card"><div class="card-top"><div><span class="sym">'+i.symbol+'</span><span class="coin-nm">'+i.name+'</span>'+(i.ta<=0?'<span class="trade-badge sell">CLOSED</span>':'')+'</div><div><div class="card-val">'+fmt(i.cv)+'</div><div class="card-pnl '+col(totalPnl)+'">'+(totalPnl>=0?'+':'')+fmt(totalPnl)+'</div></div></div><div class="card-bottom"><div><div class="s-label">HOLDING</div><div class="s-val">'+(i.ta>0?i.ta.toLocaleString("en-US",{maximumFractionDigits:8}):'0')+'</div></div><div><div class="s-label">AVG BUY</div><div class="s-val">'+(i.avg>0?fmt(i.avg):'—')+'</div></div><div><div class="s-label">PRICE</div>'+pc+'</div><div><div class="s-label">REALIZED</div><div class="s-val '+col(i.realized)+'">'+(i.realized!==0?fmt(i.realized):'—')+'</div></div></div></div>'});
+  el.innerHTML=h}
+
+function renderForm(el){
+  const ed=S.editTradeId?S.trades.find(t=>t.id===S.editTradeId):null;
+  if(ed&&!S._ei){S.selectedCoin=COINS.find(x=>x.id===ed.coinId)||S.selectedCoin;S.tradeType=ed.type||'buy';S._ei=true}
+  const c=S.selectedCoin;const isSell=S.tradeType==='sell';
+  // Get current holding for sell validation
+  const r=calcPnl();const holding=r.holdings.find(h=>h.coinId===c.id);const maxAmt=holding?holding.ta:0;
+  let pk='';
+  if(S.showPicker)pk='<div class="dropdown"><input id="cs" placeholder="Search…" oninput="fltC(this.value)"><div class="coin-list" id="cl">'+COINS.map(co=>'<button class="coin-opt '+(c.id===co.id?'sel':'')+'" onclick="S.selectedCoin=COINS.find(x=>x.id===\''+co.id+'\');S.showPicker=false;render()"><span style="font-weight:600">'+co.symbol+'</span><span style="color:var(--text3);margin-left:8px">'+co.name+'</span></button>').join('')+'</div></div>';
+  const priceLabel=isSell?'SELL PRICE (USD)':'BUY PRICE (USD)';
+  el.innerHTML='<div style="padding:6px 0"><h2 class="form-title">'+(ed?'Edit Trade':'New Trade')+'</h2>'+
+    '<div class="field"><div class="type-toggle"><button class="type-btn '+(S.tradeType==='buy'?'active-buy':'')+'" onclick="S.tradeType=\'buy\';render()">BUY</button><button class="type-btn '+(S.tradeType==='sell'?'active-sell':'')+'" onclick="S.tradeType=\'sell\';render()">SELL</button></div></div>'+
+    '<div class="field"><label class="label">COIN</label><button class="picker-btn" onclick="S.showPicker=!S.showPicker;render();setTimeout(()=>{const s=document.getElementById(\'cs\');if(s)s.focus()},50)"><span style="font-weight:600">'+c.symbol+' — '+c.name+'</span><span style="opacity:.5">'+(S.showPicker?'▲':'▼')+'</span></button>'+pk+'</div>'+
+    (isSell&&maxAmt>0?'<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin:-10px 0 14px;padding:8px 12px;background:var(--card);border-radius:8px;border:1px solid var(--border)">Available: <span style="color:var(--text);font-weight:600">'+maxAmt.toLocaleString("en-US",{maximumFractionDigits:8})+' '+c.symbol+'</span> <button style="background:rgba(255,75,75,.1);border:1px solid rgba(255,75,75,.2);color:var(--red);padding:2px 8px;border-radius:5px;font-size:10px;cursor:pointer;font-family:var(--mono);margin-left:6px" onclick="document.getElementById(\'tA\').value='+maxAmt+';document.getElementById(\'tA\').dispatchEvent(new Event(\'input\'))">Sell All</button></div>':'')+
+    '<div class="field"><label class="label">AMOUNT</label><input class="input" id="tA" type="number" step="any" placeholder="0.00" value="'+(ed?ed.amount:'')+'"></div>'+
+    '<div class="field"><label class="label">'+priceLabel+'</label><input class="input" id="tP" type="number" step="any" placeholder="0.00" value="'+(ed?ed.buyPrice:'')+'"></div>'+
+    '<div class="field"><label class="label">DATE</label><input class="input" id="tD" type="date" value="'+(ed?ed.date:td())+'"></div>'+
+    '<div class="field"><label class="label">NOTES (OPTIONAL)</label><input class="input" id="tN" type="text" placeholder="'+(isSell?'e.g. take profit, stop loss…':'e.g. DCA, dip buy…')+'" value="'+(ed?.notes||'')+'" style="font-family:var(--sans);font-size:14px"></div>'+
+    '<div id="cp"></div>'+
+    '<button class="primary-btn '+(isSell?'sell-btn':'')+'" id="sb" onclick="'+(ed?'updT()':'addT()')+'" disabled>'+(ed?(isSell?'Update Sell':'Update Buy'):(isSell?'Record Sell':'Record Buy'))+'</button>'+
+    (ed?'<button class="ghost-btn" style="width:100%;margin-top:10px" onclick="S.editTradeId=null;S._ei=false;go(\'history\')">Cancel</button>':'')+'</div>';
+  const a=document.getElementById('tA'),p=document.getElementById('tP');
+  const up=()=>{const av=parseFloat(a.value),pv=parseFloat(p.value),ok=av>0&&pv>0;
+    document.getElementById('sb').disabled=!ok;
+    if(ok){const total=av*pv;
+      if(isSell){const gainPerUnit=pv-(holding?holding.avg:0);const gain=gainPerUnit*av;
+        document.getElementById('cp').innerHTML='<div class="cost-preview sell"><div><div style="color:var(--text3);font-size:11px">Total Proceeds</div><div style="font-family:var(--mono);font-weight:600;font-size:15px;margin-top:2px">'+fmt(total)+'</div></div><div style="text-align:right"><div style="color:var(--text3);font-size:11px">Est. Gain</div><div style="font-family:var(--mono);font-weight:600;font-size:15px;margin-top:2px" class="'+col(gain)+'">'+fmt(gain)+'</div></div></div>'}
+      else document.getElementById('cp').innerHTML='<div class="cost-preview"><span style="color:var(--text3)">Total Cost</span><span style="font-family:var(--mono);font-weight:600">'+fmt(total)+'</span></div>'}
+    else document.getElementById('cp').innerHTML=''};
+  a.addEventListener('input',up);p.addEventListener('input',up);up()}
+
+function fltC(q){const l=document.getElementById('cl');if(!l)return;const lq=q.toLowerCase();l.innerHTML=COINS.filter(c=>c.name.toLowerCase().includes(lq)||c.symbol.toLowerCase().includes(lq)).map(co=>'<button class="coin-opt '+(S.selectedCoin.id===co.id?'sel':'')+'" onclick="S.selectedCoin=COINS.find(x=>x.id===\''+co.id+'\');S.showPicker=false;render()"><span style="font-weight:600">'+co.symbol+'</span><span style="color:var(--text3);margin-left:8px">'+co.name+'</span></button>').join('')}
+
+function addT(){const a=parseFloat(document.getElementById('tA').value),p=parseFloat(document.getElementById('tP').value);if(!(a>0&&p>0))return;const c=S.selectedCoin;
+  S.trades.push({id:Date.now().toString(),coinId:c.id,symbol:c.symbol,name:c.name,amount:a,buyPrice:p,date:document.getElementById('tD').value,notes:document.getElementById('tN').value||"",type:S.tradeType});save();go('portfolio');fetchPrices()}
+function updT(){const idx=S.trades.findIndex(t=>t.id===S.editTradeId);if(idx<0)return;const a=parseFloat(document.getElementById('tA').value),p=parseFloat(document.getElementById('tP').value);if(!(a>0&&p>0))return;const c=S.selectedCoin;
+  S.trades[idx]={...S.trades[idx],coinId:c.id,symbol:c.symbol,name:c.name,amount:a,buyPrice:p,date:document.getElementById('tD').value,notes:document.getElementById('tN').value||"",type:S.tradeType};S.editTradeId=null;S._ei=false;save();go('history')}
+
+function renderHist(el){
+  let h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 class="form-title" style="margin-bottom:0">Trade History</h2>'+(S.trades.length?'<button class="clear-btn" onclick="if(confirm(\'Clear all data?\')){S.trades=[];S.prices={};S.priceStatus=\'\';S.lastUpdated=null;S.pnlHistory={};save();go(\'portfolio\')}">Clear All</button>':'')+'</div>';
+  if(!S.trades.length){el.innerHTML=h+'<div class="empty"><div style="color:var(--text3)">No trades</div></div>';return}
+  [...S.trades].reverse().forEach(t=>{
+    const isSell=t.type==='sell';
+    let act;if(S.deleteConfirm===t.id)act='<div class="del-confirm"><span style="color:var(--red);font-size:12px">Delete?</span><div style="display:flex;gap:6px"><button class="yes-btn" onclick="S.trades=S.trades.filter(x=>x.id!==\''+t.id+'\');S.deleteConfirm=null;save();render()">Yes</button><button class="no-btn" onclick="S.deleteConfirm=null;render()">No</button></div></div>';
+    else act='<div class="actions"><button class="act-btn act-edit" onclick="S.editTradeId=\''+t.id+'\';S._ei=false;go(\'add\')">✎ Edit</button><button class="act-btn act-del" onclick="S.deleteConfirm=\''+t.id+'\';render()">✕ Delete</button></div>';
+    h+='<div class="card" style="border-left:3px solid '+(isSell?'var(--red)':'var(--green)')+'"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><span class="sym">'+t.symbol+'</span><span class="coin-nm">'+t.name+'</span><span class="trade-badge '+(isSell?'sell':'buy')+'">'+(isSell?'SELL':'BUY')+'</span><div style="font-family:var(--mono);color:var(--text3);font-size:11px;margin-top:3px">'+t.date+'</div>'+(t.notes?'<div style="font-size:11px;color:var(--text4);margin-top:2px;font-style:italic">'+t.notes+'</div>':'')+'</div><div style="text-align:right"><div style="font-family:var(--mono);font-size:13px">'+t.amount.toLocaleString("en-US",{maximumFractionDigits:8})+' '+t.symbol+'</div><div style="font-family:var(--mono);color:var(--text3);font-size:11px">@ '+fmt(t.buyPrice)+'</div><div style="font-family:var(--mono);font-size:12px;font-weight:600;margin-top:2px;color:'+(isSell?'var(--red)':'var(--text)')+'">'+fmt(t.amount*t.buyPrice)+'</div></div></div>'+act+'</div>'});
+  el.innerHTML=h}
+
+function renderCal(el){
+  const yr=S.calYear,mo=S.calMonth,dim=new Date(yr,mo+1,0).getDate(),fd=new Date(yr,mo,1).getDay();
+  const mn=new Date(yr,mo).toLocaleString('default',{month:'long',year:'numeric'});const tds=td();
+  const dp={};for(const[date,data] of Object.entries(S.pnlHistory)){const d=new Date(date);if(d.getMonth()===mo&&d.getFullYear()===yr)dp[d.getDate()]=data.pnl}
+  const mp=Object.values(dp).reduce((s,v)=>s+v,0),wd=Object.values(dp).filter(v=>v>0).length,ld=Object.values(dp).filter(v=>v<0).length;
+  let g='';['S','M','T','W','T','F','S'].forEach(d=>{g+='<div class="cal-day-label">'+d+'</div>'});
+  for(let i=0;i<fd;i++)g+='<div class="cal-cell empty"></div>';
+  for(let d=1;d<=dim;d++){const ds=yr+'-'+String(mo+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');const it=ds===tds;const p=dp[d];const hd=p!==undefined;
+    g+='<div class="cal-cell '+(hd?(p>=0?'profit':'loss'):'no-data')+' '+(it?'today':'')+'"><div class="cal-date">'+d+'</div>'+(hd?'<div class="cal-pnl '+col(p)+'">'+fmtS(p)+'</div>':'')+'</div>'}
+  el.innerHTML='<div class="cal-header"><h2 class="form-title" style="margin-bottom:0">PnL Calendar</h2><div class="cal-nav"><button class="cal-arrow" onclick="S.calMonth--;if(S.calMonth<0){S.calMonth=11;S.calYear--}render()">‹</button><div class="cal-month">'+mn+'</div><button class="cal-arrow" onclick="S.calMonth++;if(S.calMonth>11){S.calMonth=0;S.calYear++}render()">›</button></div></div><div class="cal-grid">'+g+'</div><div class="cal-summary"><div class="cal-stat"><div class="cal-stat-label">MONTH PNL</div><div class="cal-stat-val '+col(mp)+'">'+fmt(Math.abs(mp))+'</div></div><div class="cal-stat"><div class="cal-stat-label">WIN DAYS</div><div class="cal-stat-val green">'+wd+'</div></div><div class="cal-stat"><div class="cal-stat-label">LOSS DAYS</div><div class="cal-stat-val red">'+ld+'</div></div></div><div style="margin-top:12px;padding:11px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--text3);line-height:1.6"><span style="color:var(--green)">Tip:</span> Tap ↻ daily to record PnL snapshots and fill the calendar.</div>'}
+
+function renderAna(el){
+  const r=calcPnl(),it=r.holdings;if(!S.trades.length){el.innerHTML='<div class="empty"><div style="font-size:48px;color:var(--border);margin-bottom:14px">◔</div><div style="font-size:17px;font-weight:600;margin-bottom:8px">No data</div><div style="font-size:13px;color:var(--text3)">Add trades first</div></div>';return}
+  const win=it.filter(i=>i.pnl+i.realized>0),lose=it.filter(i=>i.pnl+i.realized<0);
+  const best=it.length?it.reduce((a,b)=>a.pp>b.pp?a:b):null;
+  const worst=it.length?it.reduce((a,b)=>a.pp<b.pp?a:b):null;
+  const wr=it.length?(win.length/it.length*100):0;
+  const uc=[...new Set(S.trades.map(t=>t.symbol))].length;
+  const buys=S.trades.filter(t=>t.type!=='sell').length,sells=S.trades.filter(t=>t.type==='sell').length;
+  const dates=S.trades.filter(t=>t.type!=='sell').map(t=>new Date(t.date));
+  const avgD=dates.length?dates.reduce((s,d)=>s+Math.floor((Date.now()-d.getTime())/(864e5)),0)/dates.length:0;
+  const hk=Object.keys(S.pnlHistory).sort();
+  const al=it.filter(i=>i.cv>0).map((x,idx)=>({...x,pct:r.totalValue>0?(x.cv/r.totalValue*100):0,clr:COLORS[idx%COLORS.length]}));
+  let ab='<div class="alloc-bar">';al.forEach(a=>{ab+='<div style="width:'+a.pct+'%;background:'+a.clr+'"></div>'});ab+='</div>';
+  let ali='';al.forEach(a=>{ali+='<div class="alloc-item"><div><span class="alloc-dot" style="background:'+a.clr+'"></span><span style="font-weight:600">'+a.symbol+'</span><span style="color:var(--text3);margin-left:6px">'+a.pct.toFixed(1)+'%</span></div><div style="color:var(--text2)">'+fmt(a.cv)+'</div></div>'});
+  let pf='';[...it].filter(i=>i.ta>0).sort((a,b)=>b.pp-a.pp).forEach(i=>{pf+='<div class="perf-row"><div><span style="font-weight:600;font-family:var(--mono)">'+i.symbol+'</span><span style="color:var(--text3);margin-left:6px;font-size:11px">'+i.name+'</span></div><div style="text-align:right"><div class="'+col(i.pp)+'" style="font-family:var(--mono);font-size:13px;font-weight:600">'+fmtPct(i.pp)+'</div><div style="font-family:var(--mono);font-size:10px;color:var(--text3)">'+(i.pnl>=0?'+':'')+fmt(i.pnl)+'</div></div></div>'});
+  let snap='';hk.slice(-10).forEach(k=>{const d=S.pnlHistory[k];snap+='<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px;font-family:var(--mono)"><span style="color:var(--text3)">'+k+'</span><span class="'+col(d.pnl)+'" style="font-weight:600">'+(d.pnl>=0?'+':'')+fmt(d.pnl)+'</span></div>'});
+
+  el.innerHTML='<div class="analytics-card"><div class="analytics-title">PORTFOLIO SUMMARY</div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">INVESTED</div><div class="stat-box-val">'+fmt(r.totalCost)+'</div></div><div class="stat-box"><div class="stat-box-label">CURRENT VALUE</div><div class="stat-box-val">'+fmt(r.totalValue)+'</div></div><div class="stat-box"><div class="stat-box-label">REALIZED PNL</div><div class="stat-box-val '+col(r.realized)+'">'+fmt(r.realized)+'</div><div class="stat-box-sub">from '+sells+' sells</div></div><div class="stat-box"><div class="stat-box-label">UNREALIZED PNL</div><div class="stat-box-val '+col(r.unrealized)+'">'+fmt(r.unrealized)+'</div><div class="stat-box-sub">open positions</div></div></div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">TOTAL PNL</div><div class="stat-box-val '+col(r.totalPnl)+'">'+fmt(r.totalPnl)+'</div><div class="stat-box-sub">'+fmtPct(r.totalCost>0?(r.totalPnl/r.totalCost)*100:0)+'</div></div><div class="stat-box"><div class="stat-box-label">WIN RATE</div><div class="stat-box-val '+(wr>=50?'green':'red')+'">'+wr.toFixed(0)+'%</div><div class="stat-box-sub">'+win.length+'W / '+lose.length+'L</div></div><div class="stat-box"><div class="stat-box-label">TRADES</div><div class="stat-box-val">'+S.trades.length+'</div><div class="stat-box-sub">'+buys+'B / '+sells+'S</div></div><div class="stat-box"><div class="stat-box-label">AVG HOLD</div><div class="stat-box-val">'+Math.round(avgD)+'d</div><div class="stat-box-sub">'+uc+' coins</div></div></div></div>'+
+  (it.length&&best?'<div class="analytics-card"><div class="analytics-title">BEST / WORST</div><div style="display:flex;gap:8px"><div style="flex:1;background:rgba(0,255,136,.06);border:1px solid rgba(0,255,136,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--green);font-family:var(--mono);letter-spacing:1px">🏆 BEST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">'+best.symbol+'</div><div class="green" style="font-size:13px;font-family:var(--mono);font-weight:600">'+fmtPct(best.pp)+'</div></div><div style="flex:1;background:rgba(255,75,75,.06);border:1px solid rgba(255,75,75,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--red);font-family:var(--mono);letter-spacing:1px">📉 WORST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">'+worst.symbol+'</div><div class="red" style="font-size:13px;font-family:var(--mono);font-weight:600">'+fmtPct(worst.pp)+'</div></div></div></div>':'')+
+  (al.length?'<div class="analytics-card"><div class="analytics-title">ALLOCATION</div>'+ab+ali+'</div>':'')+
+  (pf?'<div class="analytics-card"><div class="analytics-title">PERFORMANCE RANKING</div>'+pf+'</div>':'')+
+  (snap?'<div class="analytics-card"><div class="analytics-title">PNL SNAPSHOTS</div>'+snap+'</div>':'')}
+
+load();render();if(S.trades.length)fetchPrices();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
