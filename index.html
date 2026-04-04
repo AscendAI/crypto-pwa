@@ -1219,23 +1219,29 @@
       S.priceStatus = Object.keys(S.prices).length ? "Offline · last prices" : "Offline · set manually"; S.priceLoading = false; save(); render()
     }
 
-    function recordPnl() { const r = calcPnl(); S.pnlHistory[td()] = { pnl: r.totalPnl, realized: r.realized, unrealized: r.unrealized, value: r.totalValue }; save() }
+    function recordPnl() { const r = calcPnl(); S.pnlHistory[td()] = { pnl: r.totalPnl, realized: r.realized, unrealized: r.unrealized, value: r.totalValue, fees: r.totalFees }; save() }
 
     // Core PnL calculation with FIFO for realized gains
+    const FEE_RATE = 0.00075; // 0.075% per side (BNB fee tier)
+
     function calcPnl() {
       const byC = {};
       S.trades.forEach(t => {
         if (!byC[t.coinId]) byC[t.coinId] = { buys: [], sells: [], coinId: t.coinId, symbol: t.symbol, name: t.name };
         if (t.type === 'sell') byC[t.coinId].sells.push({ ...t }); else byC[t.coinId].buys.push({ ...t })
       });
-      let realized = 0, totalCost = 0, totalValue = 0;
+      let realized = 0, totalCost = 0, totalValue = 0, totalFees = 0;
       const holdings = [];
       for (const cid in byC) {
         const c = byC[cid]; const ch = S.prices[cid]?.change24h || 0;
         // FIFO: match sells against buys
         let buyQ = [...c.buys.map(b => ({ amt: b.amount, price: b.buyPrice }))];
-        let coinRealized = 0;
+        let coinRealized = 0; let coinFees = 0;
+        // Fees on buys
+        c.buys.forEach(b => { coinFees += b.amount * b.buyPrice * FEE_RATE });
+        // FIFO matching + sell fees
         c.sells.forEach(s => {
+          coinFees += s.amount * s.buyPrice * FEE_RATE;
           let sellAmt = s.amount;
           while (sellAmt > 0 && buyQ.length) {
             const lot = buyQ[0]; const used = Math.min(lot.amt, sellAmt);
@@ -1243,19 +1249,30 @@
             lot.amt -= used; sellAmt -= used; if (lot.amt <= 0) buyQ.shift()
           }
         });
+        // Subtract round-trip fees from realized (buy fee + sell fee on matched lots)
+        const matchedBuyFees = c.sells.reduce((s, sl) => s + sl.amount * FEE_RATE, 0);
+        const sellSideFees = c.sells.reduce((s, sl) => s + sl.amount * sl.buyPrice * FEE_RATE, 0);
+        let realizedBuyFee = 0;
+        // Recalculate buy fees only for sold portions using FIFO
+        let buyQ2 = [...c.buys.map(b => ({ amt: b.amount, price: b.buyPrice }))];
+        c.sells.forEach(s => { let sa = s.amount; while (sa > 0 && buyQ2.length) { const lot = buyQ2[0]; const used = Math.min(lot.amt, sa); realizedBuyFee += used * lot.price * FEE_RATE; lot.amt -= used; sa -= used; if (lot.amt <= 0) buyQ2.shift() } });
+        coinRealized -= (realizedBuyFee + sellSideFees);
         realized += coinRealized;
+        totalFees += coinFees;
         const remAmt = buyQ.reduce((s, l) => s + l.amt, 0); const remCost = buyQ.reduce((s, l) => s + l.amt * l.price, 0);
+        const remBuyFees = remAmt > 0 ? remCost * FEE_RATE : 0;
         const avgBuy = remAmt > 0 ? remCost / remAmt : 0;
         // Use live price, fallback to avg buy price so value isn't $0
         const hasLive = S.prices[cid]?.usd != null; const cp = hasLive ? S.prices[cid].usd : avgBuy;
         if (remAmt > 0 || coinRealized !== 0) {
-          const cv = remAmt * cp; const unrealPnl = cv - remCost; const pp = remCost > 0 ? (unrealPnl / remCost) * 100 : 0;
-          holdings.push({ coinId: cid, symbol: c.symbol, name: c.name, ta: remAmt, tc: remCost, currentPrice: cp, hasLive, change24h: ch, cv, pnl: unrealPnl, pp, avg: avgBuy, realized: coinRealized });
+          const cv = remAmt * cp; const unrealPnl = cv - remCost - remBuyFees; const pp = remCost > 0 ? (unrealPnl / remCost) * 100 : 0;
+          holdings.push({ coinId: cid, symbol: c.symbol, name: c.name, ta: remAmt, tc: remCost, currentPrice: cp, hasLive, change24h: ch, cv, pnl: unrealPnl, pp, avg: avgBuy, realized: coinRealized, fees: coinFees });
           totalCost += remCost; totalValue += cv
         }
       }
-      const unrealized = totalValue - totalCost; const totalAccount = totalValue + realized;
-      return { holdings: holdings.sort((a, b) => b.cv - a.cv), realized, unrealized, totalPnl: realized + unrealized, totalValue, totalCost, totalAccount }
+      const unrealized = totalValue - totalCost - holdings.reduce((s, h) => s + (h.ta > 0 ? h.tc * FEE_RATE : 0), 0);
+      const totalAccount = totalValue + realized;
+      return { holdings: holdings.sort((a, b) => b.cv - a.cv), realized, unrealized, totalPnl: realized + unrealized, totalValue, totalCost, totalAccount, totalFees }
     }
 
     function go(v) {
@@ -1320,12 +1337,13 @@
         const av = parseFloat(a.value), pv = parseFloat(p.value), ok = av > 0 && pv > 0;
         document.getElementById('sb').disabled = !ok;
         if (ok) {
-          const total = av * pv;
+          const total = av * pv; const fee = total * FEE_RATE;
           if (isSell) {
-            const gainPerUnit = pv - (holding ? holding.avg : 0); const gain = gainPerUnit * av;
-            document.getElementById('cp').innerHTML = '<div class="cost-preview sell"><div><div style="color:var(--text3);font-size:11px">Total Proceeds</div><div style="font-family:var(--mono);font-weight:600;font-size:15px;margin-top:2px">' + fmt(total) + '</div></div><div style="text-align:right"><div style="color:var(--text3);font-size:11px">Est. Gain</div><div style="font-family:var(--mono);font-weight:600;font-size:15px;margin-top:2px" class="' + col(gain) + '">' + fmt(gain) + '</div></div></div>'
+            const buyFee = holding ? holding.avg * av * FEE_RATE : 0;
+            const gainPerUnit = pv - (holding ? holding.avg : 0); const grossGain = gainPerUnit * av; const netGain = grossGain - fee - buyFee;
+            document.getElementById('cp').innerHTML = '<div class="cost-preview sell"><div><div style="color:var(--text3);font-size:11px">Total Proceeds</div><div style="font-family:var(--mono);font-weight:600;font-size:15px;margin-top:2px">' + fmt(total) + '</div><div style="color:var(--yellow);font-size:10px;font-family:var(--mono);margin-top:2px">Fee: ' + fmt(fee) + '</div></div><div style="text-align:right"><div style="color:var(--text3);font-size:11px">Net Gain</div><div style="font-family:var(--mono);font-weight:600;font-size:15px;margin-top:2px" class="' + col(netGain) + '">' + fmt(netGain) + '</div></div></div>'
           }
-          else document.getElementById('cp').innerHTML = '<div class="cost-preview"><span style="color:var(--text3)">Total Cost</span><span style="font-family:var(--mono);font-weight:600">' + fmt(total) + '</span></div>'
+          else document.getElementById('cp').innerHTML = '<div class="cost-preview"><div><span style="color:var(--text3)">Total Cost</span><div style="font-family:var(--mono);font-weight:600">' + fmt(total) + '</div></div><div style="text-align:right"><span style="color:var(--text3)">Fee (0.075%)</span><div style="font-family:var(--mono);font-weight:600;color:var(--yellow)">' + fmt(fee) + '</div></div></div>'
         }
         else document.getElementById('cp').innerHTML = ''
       };
@@ -1389,7 +1407,7 @@
       let pf = '';[...it].filter(i => i.ta > 0).sort((a, b) => b.pp - a.pp).forEach(i => { pf += '<div class="perf-row"><div><span style="font-weight:600;font-family:var(--mono)">' + i.symbol + '</span><span style="color:var(--text3);margin-left:6px;font-size:11px">' + i.name + '</span></div><div style="text-align:right"><div class="' + col(i.pp) + '" style="font-family:var(--mono);font-size:13px;font-weight:600">' + fmtPct(i.pp) + '</div><div style="font-family:var(--mono);font-size:10px;color:var(--text3)">' + (i.pnl >= 0 ? '+' : '') + fmt(i.pnl) + '</div></div></div>' });
       let snap = ''; hk.slice(-10).forEach(k => { const d = S.pnlHistory[k]; snap += '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px;font-family:var(--mono)"><span style="color:var(--text3)">' + k + '</span><span class="' + col(d.pnl) + '" style="font-weight:600">' + (d.pnl >= 0 ? '+' : '') + fmt(d.pnl) + '</span></div>' });
 
-      el.innerHTML = '<div class="analytics-card"><div class="analytics-title">PORTFOLIO SUMMARY</div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">INVESTED</div><div class="stat-box-val">' + fmt(r.totalCost) + '</div></div><div class="stat-box"><div class="stat-box-label">CURRENT VALUE</div><div class="stat-box-val">' + fmt(r.totalValue) + '</div></div><div class="stat-box"><div class="stat-box-label">REALIZED PNL</div><div class="stat-box-val ' + col(r.realized) + '">' + fmt(r.realized) + '</div><div class="stat-box-sub">from ' + sells + ' sells</div></div><div class="stat-box"><div class="stat-box-label">UNREALIZED PNL</div><div class="stat-box-val ' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</div><div class="stat-box-sub">open positions</div></div></div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">TOTAL PNL</div><div class="stat-box-val ' + col(r.totalPnl) + '">' + fmt(r.totalPnl) + '</div><div class="stat-box-sub">' + fmtPct(r.totalCost > 0 ? (r.totalPnl / r.totalCost) * 100 : 0) + '</div></div><div class="stat-box"><div class="stat-box-label">WIN RATE</div><div class="stat-box-val ' + (wr >= 50 ? 'green' : 'red') + '">' + wr.toFixed(0) + '%</div><div class="stat-box-sub">' + win.length + 'W / ' + lose.length + 'L</div></div><div class="stat-box"><div class="stat-box-label">TRADES</div><div class="stat-box-val">' + S.trades.length + '</div><div class="stat-box-sub">' + buys + 'B / ' + sells + 'S</div></div><div class="stat-box"><div class="stat-box-label">AVG HOLD</div><div class="stat-box-val">' + Math.round(avgD) + 'd</div><div class="stat-box-sub">' + uc + ' coins</div></div></div></div>' +
+      el.innerHTML = '<div class="analytics-card"><div class="analytics-title">PORTFOLIO SUMMARY</div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">INVESTED</div><div class="stat-box-val">' + fmt(r.totalCost) + '</div></div><div class="stat-box"><div class="stat-box-label">CURRENT VALUE</div><div class="stat-box-val">' + fmt(r.totalValue) + '</div></div><div class="stat-box"><div class="stat-box-label">REALIZED PNL</div><div class="stat-box-val ' + col(r.realized) + '">' + fmt(r.realized) + '</div><div class="stat-box-sub">after fees · from ' + sells + ' sells</div></div><div class="stat-box"><div class="stat-box-label">UNREALIZED PNL</div><div class="stat-box-val ' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</div><div class="stat-box-sub">after buy fees</div></div></div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">TOTAL PNL</div><div class="stat-box-val ' + col(r.totalPnl) + '">' + fmt(r.totalPnl) + '</div><div class="stat-box-sub">' + fmtPct(r.totalCost > 0 ? (r.totalPnl / r.totalCost) * 100 : 0) + '</div></div><div class="stat-box"><div class="stat-box-label">TOTAL FEES</div><div class="stat-box-val" style="color:var(--yellow)">' + fmt(r.totalFees) + '</div><div class="stat-box-sub">0.075% per side</div></div><div class="stat-box"><div class="stat-box-label">TRADES</div><div class="stat-box-val">' + S.trades.length + '</div><div class="stat-box-sub">' + buys + 'B / ' + sells + 'S</div></div><div class="stat-box"><div class="stat-box-label">WIN RATE</div><div class="stat-box-val ' + (wr >= 50 ? 'green' : 'red') + '">' + wr.toFixed(0) + '%</div><div class="stat-box-sub">' + win.length + 'W / ' + lose.length + 'L</div></div></div></div>' +
         (it.length && best ? '<div class="analytics-card"><div class="analytics-title">BEST / WORST</div><div style="display:flex;gap:8px"><div style="flex:1;background:rgba(0,255,136,.06);border:1px solid rgba(0,255,136,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--green);font-family:var(--mono);letter-spacing:1px">🏆 BEST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">' + best.symbol + '</div><div class="green" style="font-size:13px;font-family:var(--mono);font-weight:600">' + fmtPct(best.pp) + '</div></div><div style="flex:1;background:rgba(255,75,75,.06);border:1px solid rgba(255,75,75,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--red);font-family:var(--mono);letter-spacing:1px">📉 WORST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">' + worst.symbol + '</div><div class="red" style="font-size:13px;font-family:var(--mono);font-weight:600">' + fmtPct(worst.pp) + '</div></div></div></div>' : '') +
         (al.length ? '<div class="analytics-card"><div class="analytics-title">ALLOCATION</div>' + ab + ali + '</div>' : '') +
         (pf ? '<div class="analytics-card"><div class="analytics-title">PERFORMANCE RANKING</div>' + pf + '</div>' : '') +
