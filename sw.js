@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cryptofolio-v1';
+const CACHE_NAME = 'cryptofolio-v3';
 const ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', e => {
