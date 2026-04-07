@@ -1161,7 +1161,7 @@
         const av = document.getElementById('userAvatar');
         if (user.photoURL) { av.src = user.photoURL; av.style.display = 'block' }
         loadFromFirestore().then(() => { render(); if (S.trades.length) fetchPrices() });
-        if(!window._priceInterval){ window._priceInterval=setInterval(()=>{ if(S.trades.length&&!S.priceLoading) fetchPrices() },10000) }
+        if(!window._priceInterval){ window._priceInterval=setInterval(()=>{ if(S.trades.length&&!S.priceLoading&&S.view==='portfolio') fetchPrices() },30000) }
       } else {
         document.getElementById('login-screen').style.display = 'flex';
         document.getElementById('app').style.display = 'none';
@@ -1296,7 +1296,9 @@
     }
 
     function go(v) {
-      S.view = v; S.showPicker = false; S.editingPrice = null; S.deleteConfirm = null; S.editTradeId = null; S._ei = false; if (v === 'add') S.tradeType = 'buy';
+      S.view = v; S.showPicker = false; S.editingPrice = null; S.deleteConfirm = null;
+      if (v !== 'add') { S.editTradeId = null; S._ei = false }
+      if (v === 'add' && !S.editTradeId) S.tradeType = 'buy';
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === v)); render()
     }
     function setMP(cid) {
@@ -1397,7 +1399,15 @@
       const yr = S.calYear, mo = S.calMonth, dim = new Date(yr, mo + 1, 0).getDate(), fd = new Date(yr, mo, 1).getDay();
       const mn = new Date(yr, mo).toLocaleString('default', { month: 'long', year: 'numeric' }); const tds = td();
       const mode = S.calMode || "realized";
-      const dp = {}; for (const [date, data] of Object.entries(S.pnlHistory)) { const d = new Date(date); if (d.getMonth() === mo && d.getFullYear() === yr) dp[d.getDate()] = mode === "realized" ? (data.realized || 0) : mode === "unrealized" ? (data.unrealized || 0) : data.pnl }
+      // Sort all history dates to compute daily deltas
+      const allDates = Object.keys(S.pnlHistory).sort();
+      const getVal = (data) => mode === "realized" ? (data.realized || 0) : mode === "unrealized" ? (data.unrealized || 0) : data.pnl;
+      const dp = {}; for (let i = 0; i < allDates.length; i++) {
+        const date = allDates[i]; const data = S.pnlHistory[date]; const d = new Date(date);
+        const cur = getVal(data);
+        const prev = i > 0 ? getVal(S.pnlHistory[allDates[i - 1]]) : 0;
+        if (d.getMonth() === mo && d.getFullYear() === yr) dp[d.getDate()] = cur - prev;
+      }
       const mp = Object.values(dp).reduce((s, v) => s + v, 0), wd = Object.values(dp).filter(v => v > 0).length, ld = Object.values(dp).filter(v => v < 0).length;
       let g = '';['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach(d => { g += '<div class="cal-day-label">' + d + '</div>' });
       for (let i = 0; i < fd; i++)g += '<div class="cal-cell empty"></div>';
