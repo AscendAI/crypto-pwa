@@ -1327,13 +1327,15 @@
       if (anyNoLive) h += '<div style="margin-top:8px;font-size:10px;color:var(--yellow);font-family:var(--mono)">⚠ Some prices using buy price as estimate — tap ↻ or set manually</div>';
       h += '<div class="status-bar">' + sh + '</div></div>';
       it.forEach(i => {
-        if (i.ta <= 0 && i.realized === 0) return; let pc;
-        if (i.ta > 0) {
-          if (S.editingPrice === i.coinId) pc = '<div class="mini-edit"><input class="mini-input" id="pi-' + i.coinId + '" type="number" step="any" value="' + (i.currentPrice || '') + '" placeholder="0" onkeydown="if(event.key===\'Enter\')setMP(\'' + i.coinId + '\');if(event.key===\'Escape\'){S.editingPrice=null;render()}"><button class="mini-btn" onclick="setMP(\'' + i.coinId + '\')">✓</button></div>';
-          else pc = '<div class="s-val editable" onclick="S.editingPrice=\'' + i.coinId + '\';render();setTimeout(()=>{const x=document.getElementById(\'pi-' + i.coinId + '\');if(x)x.focus()},50)">' + (i.hasLive ? fmt(i.currentPrice) : '<span style="color:var(--yellow)">' + fmt(i.currentPrice) + '*</span>') + '</div>'
-        } else pc = '<div class="s-val">—</div>';
+        if (i.ta <= 0 && i.realized === 0) return;
         const totalPnl = i.pnl + i.realized;
-        h += '<div class="card"><div class="card-top"><div><span class="sym">' + i.symbol + '</span><span class="coin-nm">' + i.name + '</span>' + (i.ta <= 0 ? '<span class="trade-badge sell">CLOSED</span>' : '') + '</div><div><div class="card-val">' + fmt(i.cv) + '</div><div class="card-pnl ' + col(totalPnl) + '">' + (totalPnl >= 0 ? '+' : '') + fmt(totalPnl) + '</div></div></div><div class="card-bottom"><div><div class="s-label">HOLDING</div><div class="s-val">' + (i.ta > 0 ? i.ta.toLocaleString("en-US", { maximumFractionDigits: 8 }) : '0') + '</div></div><div><div class="s-label">AVG BUY</div><div class="s-val">' + (i.avg > 0 ? fmt(i.avg) : '—') + '</div></div><div><div class="s-label">PRICE</div>' + pc + '</div><div><div class="s-label">REALIZED</div><div class="s-val ' + col(i.realized) + '">' + (i.realized !== 0 ? fmt(i.realized) : '—') + '</div></div></div></div>'
+        const ch24 = i.ta > 0 && i.change24h ? '<span style="font-size:10px;font-family:var(--mono);color:var(--' + (i.change24h >= 0 ? 'green' : 'red') + ')">' + (i.change24h >= 0 ? '+' : '') + i.change24h.toFixed(2) + '%</span>' : '';
+        let priceRow = '';
+        if (i.ta > 0) {
+          if (S.editingPrice === i.coinId) priceRow = '<div style="margin-top:3px"><div class="mini-edit"><input class="mini-input" id="pi-' + i.coinId + '" type="number" step="any" value="' + (i.currentPrice || '') + '" placeholder="0" onkeydown="if(event.key===\'Enter\')setMP(\'' + i.coinId + '\');if(event.key===\'Escape\'){S.editingPrice=null;render()}"><button class="mini-btn" onclick="setMP(\'' + i.coinId + '\')">✓</button></div></div>';
+          else priceRow = '<div style="margin-top:3px;font-size:13px;font-family:var(--mono);font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer" onclick="S.editingPrice=\'' + i.coinId + '\';render();setTimeout(()=>{const x=document.getElementById(\'pi-' + i.coinId + '\');if(x)x.focus()},50)">' + (i.hasLive ? fmt(i.currentPrice) : '<span style="color:var(--yellow)">' + fmt(i.currentPrice) + '*</span>') + ch24 + '</div>';
+        }
+        h += '<div class="card"><div class="card-top"><div><span class="sym">' + i.symbol + '</span><span class="coin-nm">' + i.name + '</span>' + (i.ta <= 0 ? '<span class="trade-badge sell">CLOSED</span>' : '') + priceRow + '</div><div><div class="card-val">' + fmt(i.cv) + '</div><div class="card-pnl ' + col(totalPnl) + '">' + (totalPnl >= 0 ? '+' : '') + fmt(totalPnl) + '</div></div></div><div class="card-bottom"><div><div class="s-label">HOLDING</div><div class="s-val">' + (i.ta > 0 ? i.ta.toLocaleString("en-US", { maximumFractionDigits: 8 }) : '0') + '</div></div><div><div class="s-label">AVG BUY</div><div class="s-val">' + (i.avg > 0 ? fmt(i.avg) : '—') + '</div></div><div><div class="s-label">COST</div><div class="s-val">' + (i.tc > 0 ? fmt(i.tc) : '—') + '</div></div><div><div class="s-label">REALIZED</div><div class="s-val ' + col(i.realized) + '">' + (i.realized !== 0 ? fmt(i.realized) : '—') + '</div></div></div></div>'
       });
       el.innerHTML = h
     }
