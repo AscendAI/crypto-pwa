@@ -1291,8 +1291,12 @@
         }
       }
       const unrealized = totalValue - totalCost - holdings.reduce((s, h) => s + (h.ta > 0 ? h.tc * FEE_RATE : 0), 0);
-      const totalAccount = totalValue + realized;
-      return { holdings: holdings.sort((a, b) => b.cv - a.cv), realized, unrealized, totalPnl: realized + unrealized, totalValue, totalCost, totalAccount, totalFees }
+      // Net invested = total money put in (all buys) minus money taken out (all sells)
+      const totalBuys = S.trades.filter(t => t.type !== 'sell').reduce((s, t) => s + t.amount * t.buyPrice, 0);
+      const totalSells = S.trades.filter(t => t.type === 'sell').reduce((s, t) => s + t.amount * t.buyPrice, 0);
+      const netInvested = totalBuys - totalSells;
+      const totalPnl = realized + unrealized;
+      return { holdings: holdings.sort((a, b) => b.cv - a.cv), realized, unrealized, totalPnl, totalValue, totalCost, netInvested, totalFees }
     }
 
     function go(v) {
@@ -1318,8 +1322,8 @@
       const anyNoLive = it.some(i => i.ta > 0 && !i.hasLive);
       let sh = S.priceLoading ? '<div class="mini-spinner"></div><span style="color:var(--blue)">Fetching…</span>'
         : '<span style="font-size:7px;color:' + (S.priceStatus.startsWith("Live") ? "var(--green)" : "var(--yellow)") + '">⬤</span><span>' + (S.priceStatus || 'Tap ↻') + '</span>' + (S.lastUpdated ? '<span class="time">' + S.lastUpdated + '</span>' : '');
-      let h = '<div class="bal-card"><div class="bal-label">ACCOUNT VALUE</div><div class="bal-amt">' + fmt(r.totalAccount) + '</div><div class="pnl-row"><span class="pnl-badge" style="background:' + (r.totalPnl >= 0 ? 'rgba(0,255,136,.12)' : 'rgba(255,75,75,.12)') + ';color:var(--' + col(r.totalPnl) + ')">' + (r.totalPnl >= 0 ? '▲' : '▼') + ' ' + fmt(Math.abs(r.totalPnl)) + '</span><span class="pnl-pct ' + col(r.totalPnl) + '">' + fmtPct(r.totalCost > 0 ? (r.totalPnl / r.totalCost) * 100 : 0) + '</span></div>';
-      h += '<div class="pnl-detail"><span><span style="color:var(--text4)">Holdings:</span> <span>' + fmt(r.totalValue) + '</span></span><span><span style="color:var(--text4)">Realized:</span> <span class="' + col(r.realized) + '">' + fmt(r.realized) + '</span></span><span><span style="color:var(--text4)">Unrealized:</span> <span class="' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</span></span></div>';
+      let h = '<div class="bal-card"><div class="bal-label">HOLDINGS VALUE</div><div class="bal-amt">' + fmt(r.totalValue) + '</div><div class="pnl-row"><span class="pnl-badge" style="background:' + (r.totalPnl >= 0 ? 'rgba(0,255,136,.12)' : 'rgba(255,75,75,.12)') + ';color:var(--' + col(r.totalPnl) + ')">' + (r.totalPnl >= 0 ? '▲' : '▼') + ' Total P&L ' + fmt(Math.abs(r.totalPnl)) + '</span><span class="pnl-pct ' + col(r.totalPnl) + '">' + fmtPct(r.netInvested > 0 ? (r.totalPnl / r.netInvested) * 100 : 0) + '</span></div>';
+      h += '<div class="pnl-detail"><span><span style="color:var(--text4)">Invested:</span> <span>' + fmt(r.netInvested) + '</span></span><span><span style="color:var(--text4)">Realized:</span> <span class="' + col(r.realized) + '">' + fmt(r.realized) + '</span></span><span><span style="color:var(--text4)">Unrealized:</span> <span class="' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</span></span></div>';
       if (anyNoLive) h += '<div style="margin-top:8px;font-size:10px;color:var(--yellow);font-family:var(--mono)">⚠ Some prices using buy price as estimate — tap ↻ or set manually</div>';
       h += '<div class="status-bar">' + sh + '</div></div>';
       it.forEach(i => {
