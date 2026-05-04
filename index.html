@@ -1241,45 +1241,47 @@
 
     function recordPnl() { const r = calcPnl(); S.pnlHistory[td()] = { pnl: r.totalPnl, realized: r.realized, unrealized: r.unrealized, value: r.totalValue, fees: r.totalFees }; save() }
 
-    // Core PnL calculation with FIFO for realized gains
+    // Core PnL calculation with Weighted Average Cost for realized gains
     const FEE_RATE = 0.00075; // 0.075% per side (BNB fee tier)
 
     function calcPnl() {
       const byC = {};
       S.trades.forEach(t => {
-        if (!byC[t.coinId]) byC[t.coinId] = { buys: [], sells: [], coinId: t.coinId, symbol: t.symbol, name: t.name };
-        if (t.type === 'sell') byC[t.coinId].sells.push({ ...t }); else byC[t.coinId].buys.push({ ...t })
+        if (!byC[t.coinId]) byC[t.coinId] = { trades: [], coinId: t.coinId, symbol: t.symbol, name: t.name };
+        byC[t.coinId].trades.push(t);
       });
       let realized = 0, totalCost = 0, totalValue = 0, totalFees = 0;
       const holdings = [];
       for (const cid in byC) {
         const c = byC[cid]; const ch = S.prices[cid]?.change24h || 0;
-        // FIFO: match sells against buys
-        let buyQ = [...c.buys.map(b => ({ amt: b.amount, price: b.buyPrice }))];
-        let coinRealized = 0; let coinFees = 0;
-        // Fees on buys
-        c.buys.forEach(b => { coinFees += b.amount * b.buyPrice * FEE_RATE });
-        // FIFO matching + sell fees
-        c.sells.forEach(s => {
-          coinFees += s.amount * s.buyPrice * FEE_RATE;
-          let sellAmt = s.amount;
-          while (sellAmt > 0 && buyQ.length) {
-            const lot = buyQ[0]; const used = Math.min(lot.amt, sellAmt);
-            coinRealized += (s.buyPrice - lot.price) * used;
-            lot.amt -= used; sellAmt -= used; if (lot.amt <= 0) buyQ.shift()
+        // Process trades chronologically: by date, then by id (creation timestamp) for same-day order
+        const sorted = [...c.trades].sort((a, b) => {
+          const dc = (a.date || '').localeCompare(b.date || '');
+          if (dc !== 0) return dc;
+          return (a.id || '').localeCompare(b.id || '');
+        });
+        let qty = 0, costBasis = 0; // running holding under WAC
+        let coinRealized = 0, coinFees = 0;
+        sorted.forEach(t => {
+          const fee = t.amount * t.buyPrice * FEE_RATE;
+          coinFees += fee;
+          if (t.type === 'sell') {
+            // Cap sell at available qty to avoid going negative on bad data
+            const sellAmt = Math.min(t.amount, qty);
+            const avg = qty > 0 ? costBasis / qty : 0;
+            const buyFeeOnSold = avg * sellAmt * FEE_RATE;
+            coinRealized += (t.buyPrice - avg) * sellAmt - fee - buyFeeOnSold;
+            costBasis -= avg * sellAmt;
+            qty -= sellAmt;
+          } else {
+            costBasis += t.amount * t.buyPrice;
+            qty += t.amount;
           }
         });
-        // Subtract round-trip fees from realized (buy fee + sell fee on matched lots)
-        const matchedBuyFees = c.sells.reduce((s, sl) => s + sl.amount * FEE_RATE, 0);
-        const sellSideFees = c.sells.reduce((s, sl) => s + sl.amount * sl.buyPrice * FEE_RATE, 0);
-        let realizedBuyFee = 0;
-        // Recalculate buy fees only for sold portions using FIFO
-        let buyQ2 = [...c.buys.map(b => ({ amt: b.amount, price: b.buyPrice }))];
-        c.sells.forEach(s => { let sa = s.amount; while (sa > 0 && buyQ2.length) { const lot = buyQ2[0]; const used = Math.min(lot.amt, sa); realizedBuyFee += used * lot.price * FEE_RATE; lot.amt -= used; sa -= used; if (lot.amt <= 0) buyQ2.shift() } });
-        coinRealized -= (realizedBuyFee + sellSideFees);
         realized += coinRealized;
         totalFees += coinFees;
-        const remAmt = buyQ.reduce((s, l) => s + l.amt, 0); const remCost = buyQ.reduce((s, l) => s + l.amt * l.price, 0);
+        const remAmt = qty;
+        const remCost = costBasis;
         const remBuyFees = remAmt > 0 ? remCost * FEE_RATE : 0;
         const avgBuy = remAmt > 0 ? remCost / remAmt : 0;
         // Use live price, fallback to avg buy price so value isn't $0
