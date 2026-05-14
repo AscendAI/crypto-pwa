@@ -1407,14 +1407,55 @@
       const yr = S.calYear, mo = S.calMonth, dim = new Date(yr, mo + 1, 0).getDate(), fd = new Date(yr, mo, 1).getDay();
       const mn = new Date(yr, mo).toLocaleString('default', { month: 'long', year: 'numeric' }); const tds = td();
       const mode = S.calMode || "realized";
-      // Sort all history dates to compute daily deltas
+      // Realized PnL per day: replay trades chronologically (WAC) and credit each sell to its trade date.
+      // Derived from trades (not snapshot deltas) so it stays correct across edits, gaps, and prior calc bugs.
+      const realizedByDay = {};
+      const tradesByCoin = {};
+      S.trades.forEach(t => { (tradesByCoin[t.coinId] = tradesByCoin[t.coinId] || []).push(t); });
+      for (const cid in tradesByCoin) {
+        const sorted = [...tradesByCoin[cid]].sort((a, b) => {
+          const dc = (a.date || '').localeCompare(b.date || '');
+          if (dc !== 0) return dc;
+          return (a.id || '').localeCompare(b.id || '');
+        });
+        let qty = 0, costBasis = 0;
+        sorted.forEach(t => {
+          if (t.type === 'sell') {
+            const sellAmt = Math.min(t.amount, qty);
+            const avg = qty > 0 ? costBasis / qty : 0;
+            const fee = t.amount * t.buyPrice * FEE_RATE;
+            const buyFeeOnSold = avg * sellAmt * FEE_RATE;
+            const r = (t.buyPrice - avg) * sellAmt - fee - buyFeeOnSold;
+            const day = (t.date || '').slice(0, 10);
+            if (day) realizedByDay[day] = (realizedByDay[day] || 0) + r;
+            costBasis -= avg * sellAmt;
+            qty -= sellAmt;
+          } else {
+            costBasis += t.amount * t.buyPrice;
+            qty += t.amount;
+          }
+        });
+      }
+      // Unrealized daily delta from snapshots. Skip the first snapshot to avoid showing the full cumulative as a single day.
+      const unrealByDay = {};
       const allDates = Object.keys(S.pnlHistory).sort();
-      const getVal = (data) => mode === "realized" ? (data.realized || 0) : mode === "unrealized" ? (data.unrealized || 0) : data.pnl;
-      const dp = {}; for (let i = 0; i < allDates.length; i++) {
-        const date = allDates[i]; const data = S.pnlHistory[date]; const d = new Date(date);
-        const cur = getVal(data);
-        const prev = i > 0 ? getVal(S.pnlHistory[allDates[i - 1]]) : 0;
-        if (d.getMonth() === mo && d.getFullYear() === yr) dp[d.getDate()] = cur - prev;
+      for (let i = 1; i < allDates.length; i++) {
+        const cur = S.pnlHistory[allDates[i]].unrealized || 0;
+        const prev = S.pnlHistory[allDates[i - 1]].unrealized || 0;
+        unrealByDay[allDates[i]] = cur - prev;
+      }
+      // Parse 'YYYY-MM-DD' as local time. new Date('YYYY-MM-DD') would treat it as UTC midnight,
+      // shifting the displayed day by one for users west of UTC. Trade dates come from a local date input.
+      const parseYMD = (ds) => { const [y, m, d] = ds.split('-').map(Number); return { y, m: m - 1, d }; };
+      const inMonth = (ds) => { const p = parseYMD(ds); return p.m === mo && p.y === yr; };
+      const dp = {};
+      if (mode === "realized") {
+        for (const ds in realizedByDay) if (inMonth(ds)) dp[parseYMD(ds).d] = realizedByDay[ds];
+      } else if (mode === "unrealized") {
+        for (const ds in unrealByDay) if (inMonth(ds)) dp[parseYMD(ds).d] = unrealByDay[ds];
+      } else {
+        const days = new Set([...Object.keys(realizedByDay), ...Object.keys(unrealByDay)]);
+        days.forEach(ds => { if (inMonth(ds)) dp[parseYMD(ds).d] = (realizedByDay[ds] || 0) + (unrealByDay[ds] || 0); });
       }
       const mp = Object.values(dp).reduce((s, v) => s + v, 0), wd = Object.values(dp).filter(v => v > 0).length, ld = Object.values(dp).filter(v => v < 0).length;
       let g = '';['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach(d => { g += '<div class="cal-day-label">' + d + '</div>' });
