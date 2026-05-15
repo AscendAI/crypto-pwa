@@ -1135,7 +1135,9 @@
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const db = firebase.firestore();
-    db.enablePersistence().catch(() => { });
+    // Multi-tab persistence: without `synchronizeTabs`, only the first tab gets the IndexedDB lock
+    // and subsequent tabs run without offline persistence (writes can be lost on close).
+    db.enablePersistence({ synchronizeTabs: true }).catch(err => console.warn('Firestore persistence:', err && err.code));
     let currentUser = null;
 
     const COINS = [{ id: "bitcoin", symbol: "BTC", name: "Bitcoin" }, { id: "ethereum", symbol: "ETH", name: "Ethereum" }, { id: "solana", symbol: "SOL", name: "Solana" }, { id: "ripple", symbol: "XRP", name: "XRP" }, { id: "cardano", symbol: "ADA", name: "Cardano" }, { id: "dogecoin", symbol: "DOGE", name: "Dogecoin" }, { id: "polkadot", symbol: "DOT", name: "Polkadot" }, { id: "avalanche-2", symbol: "AVAX", name: "Avalanche" }, { id: "chainlink", symbol: "LINK", name: "Chainlink" }, { id: "matic-network", symbol: "POL", name: "Polygon" }, { id: "litecoin", symbol: "LTC", name: "Litecoin" }, { id: "tron", symbol: "TRX", name: "TRON" }, { id: "shiba-inu", symbol: "SHIB", name: "Shiba Inu" }, { id: "pepe", symbol: "PEPE", name: "Pepe" }, { id: "sui", symbol: "SUI", name: "Sui" }, { id: "binancecoin", symbol: "BNB", name: "BNB" }, { id: "near", symbol: "NEAR", name: "NEAR" }, { id: "aptos", symbol: "APT", name: "Aptos" }, { id: "render-token", symbol: "RENDER", name: "Render" }, { id: "injective-protocol", symbol: "INJ", name: "Injective" }];
@@ -1150,7 +1152,12 @@
     }
 
     function signOutUser() {
-      if (confirm('Sign out?')) { clearInterval(window._priceInterval); window._priceInterval = null; auth.signOut() }
+      if (confirm('Sign out?')) {
+        // Flush any unsynced changes BEFORE we lose currentUser, otherwise saveToFirestore early-returns and the write is lost.
+        flushSave();
+        clearInterval(window._priceInterval); window._priceInterval = null;
+        auth.signOut();
+      }
     }
 
     auth.onAuthStateChanged(user => {
@@ -1165,60 +1172,112 @@
       } else {
         document.getElementById('login-screen').style.display = 'flex';
         document.getElementById('app').style.display = 'none';
+        // Stop polling even if sign-out happened server-side (token revoke, session expiry) without going through signOutUser.
+        if (window._priceInterval) { clearInterval(window._priceInterval); window._priceInterval = null; }
         S = { trades: [], prices: {}, priceStatus: "", lastUpdated: null, pnlHistory: {}, view: "portfolio", selectedCoin: COINS[0], editingPrice: null, deleteConfirm: null, showPicker: false, priceLoading: false, editTradeId: null, tradeType: "buy", calMonth: new Date().getMonth(), calYear: new Date().getFullYear(), calMode: "realized" };
       }
     });
     let S = { trades: [], prices: {}, priceStatus: "", lastUpdated: null, pnlHistory: {}, view: "portfolio", selectedCoin: COINS[0], editingPrice: null, deleteConfirm: null, showPicker: false, priceLoading: false, editTradeId: null, tradeType: "buy", calMonth: new Date().getMonth(), calYear: new Date().getFullYear(), calMode: "realized" };
 
     let _saveTimer = null;
-    function save() {
-      // Save to localStorage as offline cache
-      try { localStorage.setItem("cryptofolio-v3", JSON.stringify({ trades: S.trades, prices: S.prices, priceStatus: S.priceStatus, lastUpdated: S.lastUpdated, pnlHistory: S.pnlHistory })) } catch (e) { }
-      // Debounced save to Firestore
+    const LS_KEY = "cryptofolio-v3";
+    function _writeLocal() {
+      try {
+        // Tag the cache with the current uid so loadFromFirestore can ignore stale data left by another account on a shared device.
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          trades: S.trades, prices: S.prices, priceStatus: S.priceStatus,
+          lastUpdated: S.lastUpdated, pnlHistory: S.pnlHistory,
+          _modAt: S._modAt, _uid: currentUser ? currentUser.uid : null
+        }));
+      } catch (e) { }
+    }
+    function _readLocalForUid(uid) {
+      // Returns the local cache only if it matches `uid`, or if it has no _uid tag (legacy data — assumed to belong to the first signed-in user).
+      try {
+        const d = JSON.parse(localStorage.getItem(LS_KEY));
+        if (!d) return null;
+        if (d._uid && d._uid !== uid) return null;
+        return d;
+      } catch (e) { return null; }
+    }
+    function save(immediate) {
+      // Bump local modification timestamp so loadFromFirestore can detect unsynced changes.
+      S._modAt = Date.now();
+      _writeLocal();
       if (!currentUser) return;
       clearTimeout(_saveTimer);
-      _saveTimer = setTimeout(() => saveToFirestore(), 500);
+      if (immediate) { _saveTimer = null; saveToFirestore(); }
+      else _saveTimer = setTimeout(() => { _saveTimer = null; saveToFirestore(); }, 500);
+    }
+    function flushSave() {
+      if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; saveToFirestore(); }
     }
 
     function saveToFirestore() {
       if (!currentUser) return;
-      const ref = db.collection('users').doc(currentUser.uid);
-      ref.set({
+      const uid = currentUser.uid;
+      db.collection('users').doc(uid).set({
         trades: S.trades,
         prices: S.prices,
         priceStatus: S.priceStatus,
         lastUpdated: S.lastUpdated,
         pnlHistory: S.pnlHistory,
+        _modAt: S._modAt || Date.now(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }).catch(e => console.error('Firestore save error:', e));
     }
 
     async function loadFromFirestore() {
       if (!currentUser) return;
+      // Capture uid up front; auth state could flip during the await.
+      const uid = currentUser.uid;
       try {
-        const doc = await db.collection('users').doc(currentUser.uid).get();
+        const doc = await db.collection('users').doc(uid).get();
+        // Bail if the user changed while we were awaiting the network.
+        if (!currentUser || currentUser.uid !== uid) return;
+        // Re-read local AFTER the await so a user edit that happened during the round-trip isn't missed.
+        const local = _readLocalForUid(uid);
         if (doc.exists) {
           const d = doc.data();
+          const localMod = (local && local._modAt) || 0;
+          const serverMod = d._modAt || 0;
+          // If local has unsynced changes (newer than server), keep local and push it back.
+          if (local && localMod > serverMod) {
+            S.trades = local.trades || []; S.prices = local.prices || {};
+            S.priceStatus = local.priceStatus || ""; S.lastUpdated = local.lastUpdated || null;
+            S.pnlHistory = local.pnlHistory || {}; S._modAt = localMod;
+            saveToFirestore();
+            return;
+          }
           S.trades = d.trades || []; S.prices = d.prices || {}; S.priceStatus = d.priceStatus || "";
           S.lastUpdated = d.lastUpdated || null; S.pnlHistory = d.pnlHistory || {};
-          // Update local cache
-          try { localStorage.setItem("cryptofolio-v3", JSON.stringify({ trades: S.trades, prices: S.prices, priceStatus: S.priceStatus, lastUpdated: S.lastUpdated, pnlHistory: S.pnlHistory })) } catch (e) { }
+          S._modAt = serverMod;
+          _writeLocal();
         } else {
-          // First login — migrate any existing localStorage data to Firestore
-          try {
-            const d = JSON.parse(localStorage.getItem("cryptofolio-v3"));
-            if (d && d.trades && d.trades.length) {
-              S.trades = d.trades || []; S.prices = d.prices || {}; S.priceStatus = d.priceStatus || "";
-              S.lastUpdated = d.lastUpdated || null; S.pnlHistory = d.pnlHistory || {};
-              saveToFirestore();
-            }
-          } catch (e) { }
+          // First login — migrate any local data that belongs to this user (or is legacy/untagged) into Firestore.
+          if (local && local.trades && local.trades.length) {
+            S.trades = local.trades || []; S.prices = local.prices || {}; S.priceStatus = local.priceStatus || "";
+            S.lastUpdated = local.lastUpdated || null; S.pnlHistory = local.pnlHistory || {};
+            S._modAt = local._modAt || Date.now();
+            saveToFirestore();
+          }
         }
       } catch (e) {
-        // Offline — fall back to localStorage
-        try { const d = JSON.parse(localStorage.getItem("cryptofolio-v3")); if (d) { S.trades = d.trades || []; S.prices = d.prices || {}; S.priceStatus = d.priceStatus || ""; S.lastUpdated = d.lastUpdated || null; S.pnlHistory = d.pnlHistory || {} } } catch (e2) { }
+        // Offline — fall back to local cache for this user.
+        if (!currentUser || currentUser.uid !== uid) return;
+        const local = _readLocalForUid(uid);
+        if (local) {
+          S.trades = local.trades || []; S.prices = local.prices || {}; S.priceStatus = local.priceStatus || "";
+          S.lastUpdated = local.lastUpdated || null; S.pnlHistory = local.pnlHistory || {};
+          S._modAt = local._modAt || 0;
+        }
       }
     }
+
+    // Flush any pending Firestore write when the page is hidden or unloaded.
+    // Without this, a debounced save can be lost if the user closes the tab within 500ms of their last action.
+    window.addEventListener('pagehide', flushSave);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
     function fmt(v) { if (v == null || isNaN(v) || v === 0) return "$0.00"; if (Math.abs(v) < .01) return "$" + v.toFixed(8); if (Math.abs(v) >= 1e6) return "$" + (v / 1e6).toFixed(2) + "M"; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
     function fmtS(v) { if (v == null || isNaN(v) || v === 0) return "$0"; const a = Math.abs(v), s = v >= 0 ? "+" : "-"; if (a >= 1e6) return s + "$" + (a / 1e6).toFixed(1) + "M"; if (a >= 1e3) return s + "$" + (a / 1e3).toFixed(1) + "K"; return s + "$" + a.toFixed(0) }
     function fmtPct(v) { return v == null || isNaN(v) ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%" }
@@ -1384,19 +1443,19 @@
 
     function addT() {
       const a = parseFloat(document.getElementById('tA').value), p = parseFloat(document.getElementById('tP').value); if (!(a > 0 && p > 0)) return; const c = S.selectedCoin;
-      S.trades.push({ id: Date.now().toString(), coinId: c.id, symbol: c.symbol, name: c.name, amount: a, buyPrice: p, date: document.getElementById('tD').value, notes: document.getElementById('tN').value || "", type: S.tradeType }); save(); go('portfolio'); fetchPrices()
+      S.trades.push({ id: Date.now().toString(), coinId: c.id, symbol: c.symbol, name: c.name, amount: a, buyPrice: p, date: document.getElementById('tD').value, notes: document.getElementById('tN').value || "", type: S.tradeType }); save(true); go('portfolio'); fetchPrices()
     }
     function updT() {
       const idx = S.trades.findIndex(t => t.id === S.editTradeId); if (idx < 0) return; const a = parseFloat(document.getElementById('tA').value), p = parseFloat(document.getElementById('tP').value); if (!(a > 0 && p > 0)) return; const c = S.selectedCoin;
-      S.trades[idx] = { ...S.trades[idx], coinId: c.id, symbol: c.symbol, name: c.name, amount: a, buyPrice: p, date: document.getElementById('tD').value, notes: document.getElementById('tN').value || "", type: S.tradeType }; S.editTradeId = null; S._ei = false; save(); go('history')
+      S.trades[idx] = { ...S.trades[idx], coinId: c.id, symbol: c.symbol, name: c.name, amount: a, buyPrice: p, date: document.getElementById('tD').value, notes: document.getElementById('tN').value || "", type: S.tradeType }; S.editTradeId = null; S._ei = false; save(true); go('history')
     }
 
     function renderHist(el) {
-      let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 class="form-title" style="margin-bottom:0">Trade History</h2>' + (S.trades.length ? '<button class="clear-btn" onclick="if(confirm(\'Clear all data?\')){S.trades=[];S.prices={};S.priceStatus=\'\';S.lastUpdated=null;S.pnlHistory={};save();go(\'portfolio\')}">Clear All</button>' : '') + '</div>';
+      let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 class="form-title" style="margin-bottom:0">Trade History</h2>' + (S.trades.length ? '<button class="clear-btn" onclick="if(confirm(\'Clear all data?\')){S.trades=[];S.prices={};S.priceStatus=\'\';S.lastUpdated=null;S.pnlHistory={};save(true);go(\'portfolio\')}">Clear All</button>' : '') + '</div>';
       if (!S.trades.length) { el.innerHTML = h + '<div class="empty"><div style="color:var(--text3)">No trades</div></div>'; return }
       [...S.trades].reverse().forEach(t => {
         const isSell = t.type === 'sell';
-        let act; if (S.deleteConfirm === t.id) act = '<div class="del-confirm"><span style="color:var(--red);font-size:12px">Delete?</span><div style="display:flex;gap:6px"><button class="yes-btn" onclick="S.trades=S.trades.filter(x=>x.id!==\'' + t.id + '\');S.deleteConfirm=null;save();render()">Yes</button><button class="no-btn" onclick="S.deleteConfirm=null;render()">No</button></div></div>';
+        let act; if (S.deleteConfirm === t.id) act = '<div class="del-confirm"><span style="color:var(--red);font-size:12px">Delete?</span><div style="display:flex;gap:6px"><button class="yes-btn" onclick="S.trades=S.trades.filter(x=>x.id!==\'' + t.id + '\');S.deleteConfirm=null;save(true);render()">Yes</button><button class="no-btn" onclick="S.deleteConfirm=null;render()">No</button></div></div>';
         else act = '<div class="actions"><button class="act-btn act-edit" onclick="S.editTradeId=\'' + t.id + '\';S._ei=false;go(\'add\')">✎ Edit</button><button class="act-btn act-del" onclick="S.deleteConfirm=\'' + t.id + '\';render()">✕ Delete</button></div>';
         h += '<div class="card" style="border-left:3px solid ' + (isSell ? 'var(--red)' : 'var(--green)') + '"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><span class="sym">' + t.symbol + '</span><span class="coin-nm">' + t.name + '</span><span class="trade-badge ' + (isSell ? 'sell' : 'buy') + '">' + (isSell ? 'SELL' : 'BUY') + '</span><div style="font-family:var(--mono);color:var(--text3);font-size:11px;margin-top:3px">' + t.date + '</div>' + (t.notes ? '<div style="font-size:11px;color:var(--text4);margin-top:2px;font-style:italic">' + t.notes + '</div>' : '') + '</div><div style="text-align:right"><div style="font-family:var(--mono);font-size:13px">' + t.amount.toLocaleString("en-US", { maximumFractionDigits: 8 }) + ' ' + t.symbol + '</div><div style="font-family:var(--mono);color:var(--text3);font-size:11px">@ ' + fmt(t.buyPrice) + '</div><div style="font-family:var(--mono);font-size:12px;font-weight:600;margin-top:2px;color:' + (isSell ? 'var(--red)' : 'var(--text)') + '">' + fmt(t.amount * t.buyPrice) + '</div></div></div>' + act + '</div>'
       });
