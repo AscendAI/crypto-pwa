@@ -1168,7 +1168,7 @@
         const av = document.getElementById('userAvatar');
         if (user.photoURL) { av.src = user.photoURL; av.style.display = 'block' }
         loadFromFirestore().then(() => { render(); if (S.trades.length) fetchPrices() });
-        if(!window._priceInterval){ window._priceInterval=setInterval(()=>{ if(S.trades.length&&!S.priceLoading&&S.view==='portfolio') fetchPrices() },30000) }
+        if(!window._priceInterval){ window._priceInterval=setInterval(()=>{ if(S.trades.length&&!S.priceLoading&&S.view==='portfolio'&&!document.hidden) fetchPrices() },30000) }
       } else {
         document.getElementById('login-screen').style.display = 'flex';
         document.getElementById('app').style.display = 'none';
@@ -1282,20 +1282,28 @@
     function fmtS(v) { if (v == null || isNaN(v) || v === 0) return "$0"; const a = Math.abs(v), s = v >= 0 ? "+" : "-"; if (a >= 1e6) return s + "$" + (a / 1e6).toFixed(1) + "M"; if (a >= 1e3) return s + "$" + (a / 1e3).toFixed(1) + "K"; return s + "$" + a.toFixed(0) }
     function fmtPct(v) { return v == null || isNaN(v) ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%" }
     function col(v) { return v >= 0 ? "green" : "red" }
-    function td() { return new Date().toISOString().split("T")[0] }
+    // Local YYYY-MM-DD so snapshot keys match trade-date inputs and calendar cells.
+    function td() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
 
     async function fetchPrices() {
-      if (!S.trades.length) return; const ids = [...new Set(S.trades.map(t => t.coinId))];
+      if (!S.trades.length) return;
+      const ids = [...new Set(S.trades.map(t => t.coinId))];
       S.priceLoading = true; render();
       try {
-        const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=" + ids.join(",") + "&vs_currencies=usd&include_24hr_change=true"); if (!r.ok) throw 0; const d = await r.json();
-        ids.forEach(id => { if (d[id]) S.prices[id] = { usd: d[id].usd, change24h: d[id].usd_24h_change || 0 } }); S.priceStatus = "Live · CoinGecko"; S.lastUpdated = new Date().toLocaleString(); recordPnl(); S.priceLoading = false; save(); render(); return
+        const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=" + ids.join(",") + "&vs_currencies=usd&include_24hr_change=true");
+        if (!r.ok) throw 0;
+        const d = await r.json();
+        ids.forEach(id => {
+          const usd = d[id] && Number(d[id].usd);
+          // Reject non-finite prices so NaN/Infinity can't propagate through totalValue.
+          if (Number.isFinite(usd)) S.prices[id] = { usd, change24h: Number(d[id].usd_24h_change) || 0 };
+        });
+        S.priceStatus = "Live · CoinGecko"; S.lastUpdated = new Date().toLocaleString();
+        recordPnl(); S.priceLoading = false; save(); render(); return;
       } catch (e) { }
-      try {
-        const r = await fetch("https://api.coincap.io/v2/assets?ids=" + ids.join(",")); if (!r.ok) throw 0; const j = await r.json();
-        (j.data || []).forEach(a => { const c = COINS.find(x => x.id === a.id || x.name.toLowerCase() === a.name.toLowerCase()); if (c) S.prices[c.id] = { usd: parseFloat(a.priceUsd), change24h: parseFloat(a.changePercent24Hr) || 0 } }); S.priceStatus = "Live · CoinCap"; S.lastUpdated = new Date().toLocaleString(); recordPnl(); S.priceLoading = false; save(); render(); return
-      } catch (e) { }
-      S.priceStatus = Object.keys(S.prices).length ? "Offline · last prices" : "Offline · set manually"; S.priceLoading = false; save(); render()
+      S.priceStatus = Object.keys(S.prices).length ? "Offline · last prices" : "Offline · set manually";
+      S.priceLoading = false; save(); render();
     }
 
     function recordPnl() { const r = calcPnl(); S.pnlHistory[td()] = { pnl: r.totalPnl, realized: r.realized, unrealized: r.unrealized, value: r.totalValue, fees: r.totalFees }; save() }
@@ -1309,7 +1317,7 @@
         if (!byC[t.coinId]) byC[t.coinId] = { trades: [], coinId: t.coinId, symbol: t.symbol, name: t.name };
         byC[t.coinId].trades.push(t);
       });
-      let realized = 0, totalCost = 0, totalValue = 0, totalFees = 0;
+      let realized = 0, totalCost = 0, totalValue = 0, totalFees = 0, totalBuys = 0, totalSells = 0;
       const holdings = [];
       for (const cid in byC) {
         const c = byC[cid]; const ch = S.prices[cid]?.change24h || 0;
@@ -1320,44 +1328,54 @@
           return (a.id || '').localeCompare(b.id || '');
         });
         let qty = 0, costBasis = 0; // running holding under WAC
-        let coinRealized = 0, coinFees = 0;
+        let coinRealized = 0, coinFees = 0, coinBuys = 0;
         sorted.forEach(t => {
-          const fee = t.amount * t.buyPrice * FEE_RATE;
-          coinFees += fee;
           if (t.type === 'sell') {
-            // Cap sell at available qty to avoid going negative on bad data
+            // Cap sell at available qty. Fee scales with actual sold amount — using t.amount here
+            // would charge fee on an over-sell that didn't actually happen.
             const sellAmt = Math.min(t.amount, qty);
             const avg = qty > 0 ? costBasis / qty : 0;
+            const fee = sellAmt * t.buyPrice * FEE_RATE;
             const buyFeeOnSold = avg * sellAmt * FEE_RATE;
+            coinFees += fee;
             coinRealized += (t.buyPrice - avg) * sellAmt - fee - buyFeeOnSold;
+            totalSells += sellAmt * t.buyPrice;
             costBasis -= avg * sellAmt;
             qty -= sellAmt;
           } else {
+            const fee = t.amount * t.buyPrice * FEE_RATE;
+            coinFees += fee;
             costBasis += t.amount * t.buyPrice;
             qty += t.amount;
+            coinBuys += t.amount * t.buyPrice;
           }
         });
         realized += coinRealized;
         totalFees += coinFees;
+        totalBuys += coinBuys;
         const remAmt = qty;
         const remCost = costBasis;
         const remBuyFees = remAmt > 0 ? remCost * FEE_RATE : 0;
         const avgBuy = remAmt > 0 ? remCost / remAmt : 0;
-        // Use live price, fallback to avg buy price so value isn't $0
-        const hasLive = S.prices[cid]?.usd != null; const cp = hasLive ? S.prices[cid].usd : avgBuy;
-        if (remAmt > 0 || coinRealized !== 0) {
-          const cv = remAmt * cp; const unrealPnl = cv - remCost - remBuyFees; const pp = remCost > 0 ? (unrealPnl / remCost) * 100 : 0;
-          holdings.push({ coinId: cid, symbol: c.symbol, name: c.name, ta: remAmt, tc: remCost, currentPrice: cp, hasLive, change24h: ch, cv, pnl: unrealPnl, pp, avg: avgBuy, realized: coinRealized, fees: coinFees });
+        // Use live price, fallback to avg buy price so value isn't $0. Reject NaN/Infinity.
+        const livePrice = S.prices[cid]?.usd;
+        const hasLive = Number.isFinite(livePrice);
+        const cp = hasLive ? livePrice : avgBuy;
+        // Float math can leave realized at ~1e-14 after a full sell at the same price; treat <half-cent as zero.
+        if (remAmt > 0 || Math.abs(coinRealized) > 0.005) {
+          const cv = remAmt * cp;
+          const unrealPnl = cv - remCost - remBuyFees;
+          const pp = remCost > 0 ? (unrealPnl / remCost) * 100 : 0;
+          // Total return %: all-time PnL on this coin over the coin's all-time gross buys.
+          const totalRet = coinBuys > 0 ? ((unrealPnl + coinRealized) / coinBuys) * 100 : 0;
+          holdings.push({ coinId: cid, symbol: c.symbol, name: c.name, ta: remAmt, tc: remCost, currentPrice: cp, hasLive, change24h: ch, cv, pnl: unrealPnl, pp, totalRet, avg: avgBuy, realized: coinRealized, fees: coinFees, buys: coinBuys });
           totalCost += remCost; totalValue += cv
         }
       }
       const unrealized = totalValue - totalCost - holdings.reduce((s, h) => s + (h.ta > 0 ? h.tc * FEE_RATE : 0), 0);
-      // Net invested = total money put in (all buys) minus money taken out (all sells)
-      const totalBuys = S.trades.filter(t => t.type !== 'sell').reduce((s, t) => s + t.amount * t.buyPrice, 0);
-      const totalSells = S.trades.filter(t => t.type === 'sell').reduce((s, t) => s + t.amount * t.buyPrice, 0);
       const netInvested = totalBuys - totalSells;
       const totalPnl = realized + unrealized;
-      return { holdings: holdings.sort((a, b) => b.cv - a.cv), realized, unrealized, totalPnl, totalValue, totalCost, netInvested, totalFees }
+      return { holdings: holdings.sort((a, b) => b.cv - a.cv), realized, unrealized, totalPnl, totalValue, totalCost, netInvested, totalBuys, totalFees }
     }
 
     function go(v) {
@@ -1383,20 +1401,20 @@
       const anyNoLive = it.some(i => i.ta > 0 && !i.hasLive);
       let sh = S.priceLoading ? '<div class="mini-spinner"></div><span style="color:var(--blue)">Fetching…</span>'
         : '<span style="font-size:7px;color:' + (S.priceStatus.startsWith("Live") ? "var(--green)" : "var(--yellow)") + '">⬤</span><span>' + (S.priceStatus || 'Tap ↻') + '</span>' + (S.lastUpdated ? '<span class="time">' + S.lastUpdated + '</span>' : '');
-      let h = '<div class="bal-card"><div class="bal-label">HOLDINGS VALUE</div><div class="bal-amt">' + fmt(r.totalValue) + '</div><div class="pnl-row"><span class="pnl-badge" style="background:' + (r.totalPnl >= 0 ? 'rgba(0,255,136,.12)' : 'rgba(255,75,75,.12)') + ';color:var(--' + col(r.totalPnl) + ')">' + (r.totalPnl >= 0 ? '▲' : '▼') + ' Total P&L ' + fmt(Math.abs(r.totalPnl)) + '</span><span class="pnl-pct ' + col(r.totalPnl) + '">' + fmtPct(r.netInvested > 0 ? (r.totalPnl / r.netInvested) * 100 : 0) + '</span></div>';
-      h += '<div class="pnl-detail"><span><span style="color:var(--text4)">Invested:</span> <span>' + fmt(r.netInvested) + '</span></span><span><span style="color:var(--text4)">Realized:</span> <span class="' + col(r.realized) + '">' + fmt(r.realized) + '</span></span><span><span style="color:var(--text4)">Unrealized:</span> <span class="' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</span></span></div>';
+      let h = '<div class="bal-card"><div class="bal-label">HOLDINGS VALUE</div><div class="bal-amt">' + fmt(r.totalValue) + '</div><div class="pnl-row"><span class="pnl-badge" style="background:' + (r.totalPnl >= 0 ? 'rgba(0,255,136,.12)' : 'rgba(255,75,75,.12)') + ';color:var(--' + col(r.totalPnl) + ')">' + (r.totalPnl >= 0 ? '▲' : '▼') + ' Total P&L ' + fmt(Math.abs(r.totalPnl)) + '</span><span class="pnl-pct ' + col(r.totalPnl) + '">' + fmtPct(r.totalBuys > 0 ? (r.totalPnl / r.totalBuys) * 100 : 0) + '</span></div>';
+      h += '<div class="pnl-detail"><span><span style="color:var(--text4)">Invested:</span> <span>' + fmt(r.totalBuys) + '</span></span><span><span style="color:var(--text4)">Realized:</span> <span class="' + col(r.realized) + '">' + fmt(r.realized) + '</span></span><span><span style="color:var(--text4)">Unrealized:</span> <span class="' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</span></span></div>';
       if (anyNoLive) h += '<div style="margin-top:8px;font-size:10px;color:var(--yellow);font-family:var(--mono)">⚠ Some prices using buy price as estimate — tap ↻ or set manually</div>';
       h += '<div class="status-bar">' + sh + '</div></div>';
       it.forEach(i => {
-        if (i.ta <= 0 && i.realized === 0) return;
+        if (i.ta <= 0 && Math.abs(i.realized) <= 0.005) return;
         const totalPnl = i.pnl + i.realized;
-        const ch24 = i.ta > 0 && i.change24h ? '<span style="font-size:10px;font-family:var(--mono);color:var(--' + (i.change24h >= 0 ? 'green' : 'red') + ')">' + (i.change24h >= 0 ? '+' : '') + i.change24h.toFixed(2) + '%</span>' : '';
+        const ch24 = i.ta > 0 && i.hasLive ? '<span style="font-size:10px;font-family:var(--mono);color:var(--' + (i.change24h >= 0 ? 'green' : 'red') + ')">' + (i.change24h >= 0 ? '+' : '') + i.change24h.toFixed(2) + '%</span>' : '';
         let priceRow = '';
         if (i.ta > 0) {
           if (S.editingPrice === i.coinId) priceRow = '<div style="margin-top:3px"><div class="mini-edit"><input class="mini-input" id="pi-' + i.coinId + '" type="number" step="any" value="' + (i.currentPrice || '') + '" placeholder="0" onkeydown="if(event.key===\'Enter\')setMP(\'' + i.coinId + '\');if(event.key===\'Escape\'){S.editingPrice=null;render()}"><button class="mini-btn" onclick="setMP(\'' + i.coinId + '\')">✓</button></div></div>';
           else priceRow = '<div style="margin-top:3px;font-size:13px;font-family:var(--mono);font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer" onclick="S.editingPrice=\'' + i.coinId + '\';render();setTimeout(()=>{const x=document.getElementById(\'pi-' + i.coinId + '\');if(x)x.focus()},50)">' + (i.hasLive ? fmt(i.currentPrice) : '<span style="color:var(--yellow)">' + fmt(i.currentPrice) + '*</span>') + ch24 + '</div>';
         }
-        h += '<div class="card"><div class="card-top"><div><span class="sym">' + i.symbol + '</span><span class="coin-nm">' + i.name + '</span>' + (i.ta <= 0 ? '<span class="trade-badge sell">CLOSED</span>' : '') + priceRow + '</div><div><div class="card-val">' + fmt(i.cv) + '</div><div class="card-pnl ' + col(totalPnl) + '">' + (totalPnl >= 0 ? '+' : '') + fmt(totalPnl) + '</div></div></div><div class="card-bottom"><div><div class="s-label">HOLDING</div><div class="s-val">' + (i.ta > 0 ? i.ta.toLocaleString("en-US", { maximumFractionDigits: 8 }) : '0') + '</div></div><div><div class="s-label">AVG BUY</div><div class="s-val">' + (i.avg > 0 ? fmt(i.avg) : '—') + '</div></div><div><div class="s-label">COST</div><div class="s-val">' + (i.tc > 0 ? fmt(i.tc) : '—') + '</div></div><div><div class="s-label">REALIZED</div><div class="s-val ' + col(i.realized) + '">' + (i.realized !== 0 ? fmt(i.realized) : '—') + '</div></div></div></div>'
+        h += '<div class="card"><div class="card-top"><div><span class="sym">' + i.symbol + '</span><span class="coin-nm">' + i.name + '</span>' + (i.ta <= 0 ? '<span class="trade-badge sell">CLOSED</span>' : '') + priceRow + '</div><div><div class="card-val">' + fmt(i.cv) + '</div><div class="card-pnl ' + col(totalPnl) + '">' + (totalPnl >= 0 ? '+' : '') + fmt(totalPnl) + '</div></div></div><div class="card-bottom"><div><div class="s-label">HOLDING</div><div class="s-val">' + (i.ta > 0 ? i.ta.toLocaleString("en-US", { maximumFractionDigits: 8 }) : '0') + '</div></div><div><div class="s-label">AVG BUY</div><div class="s-val">' + (i.avg > 0 ? fmt(i.avg) : '—') + '</div></div><div><div class="s-label">COST</div><div class="s-val">' + (i.tc > 0 ? fmt(i.tc) : '—') + '</div></div><div><div class="s-label">REALIZED</div><div class="s-val ' + col(i.realized) + '">' + (Math.abs(i.realized) > 0.005 ? fmt(i.realized) : '—') + '</div></div></div></div>'
       });
       el.innerHTML = h
     }
@@ -1405,8 +1423,11 @@
       const ed = S.editTradeId ? S.trades.find(t => t.id === S.editTradeId) : null;
       if (ed && !S._ei) { S.selectedCoin = COINS.find(x => x.id === ed.coinId) || S.selectedCoin; S.tradeType = ed.type || 'buy'; S._ei = true }
       const c = S.selectedCoin; const isSell = S.tradeType === 'sell';
-      // Get current holding for sell validation
-      const r = calcPnl(); const holding = r.holdings.find(h => h.coinId === c.id); const maxAmt = holding ? holding.ta : 0;
+      // Get current holding for sell validation. When editing an existing sell on the same coin,
+      // give back what this trade removed so the user sees pre-edit availability.
+      const r = calcPnl(); const holding = r.holdings.find(h => h.coinId === c.id);
+      let maxAmt = holding ? holding.ta : 0;
+      if (ed && ed.type === 'sell' && ed.coinId === c.id) maxAmt += ed.amount;
       let pk = '';
       if (S.showPicker) pk = '<div class="dropdown"><input id="cs" placeholder="Search…" oninput="fltC(this.value)"><div class="coin-list" id="cl">' + COINS.map(co => '<button class="coin-opt ' + (c.id === co.id ? 'sel' : '') + '" onclick="S.selectedCoin=COINS.find(x=>x.id===\'' + co.id + '\');S.showPicker=false;render()"><span style="font-weight:600">' + co.symbol + '</span><span style="color:var(--text3);margin-left:8px">' + co.name + '</span></button>').join('') + '</div></div>';
       const priceLabel = isSell ? 'SELL PRICE (USD)' : 'BUY PRICE (USD)';
@@ -1417,15 +1438,21 @@
         '<div class="field"><label class="label">AMOUNT</label><input class="input" id="tA" type="number" step="any" placeholder="0.00" value="' + (ed ? ed.amount : '') + '"></div>' +
         '<div class="field"><label class="label">' + priceLabel + '</label><input class="input" id="tP" type="number" step="any" placeholder="0.00" value="' + (ed ? ed.buyPrice : '') + '"></div>' +
         '<div class="field"><label class="label">DATE</label><input class="input" id="tD" type="date" value="' + (ed ? ed.date : td()) + '"></div>' +
-        '<div class="field"><label class="label">NOTES (OPTIONAL)</label><input class="input" id="tN" type="text" placeholder="' + (isSell ? 'e.g. take profit, stop loss…' : 'e.g. DCA, dip buy…') + '" value="' + (ed?.notes || '') + '" style="font-family:var(--sans);font-size:14px"></div>' +
+        '<div class="field"><label class="label">NOTES (OPTIONAL)</label><input class="input" id="tN" type="text" placeholder="' + (isSell ? 'e.g. take profit, stop loss…' : 'e.g. DCA, dip buy…') + '" value="' + esc(ed?.notes || '') + '" style="font-family:var(--sans);font-size:14px"></div>' +
         '<div id="cp"></div>' +
         '<button class="primary-btn ' + (isSell ? 'sell-btn' : '') + '" id="sb" onclick="' + (ed ? 'updT()' : 'addT()') + '" disabled>' + (ed ? (isSell ? 'Update Sell' : 'Update Buy') : (isSell ? 'Record Sell' : 'Record Buy')) + '</button>' +
         (ed ? '<button class="ghost-btn" style="width:100%;margin-top:10px" onclick="S.editTradeId=null;S._ei=false;go(\'history\')">Cancel</button>' : '') + '</div>';
       const a = document.getElementById('tA'), p = document.getElementById('tP');
       const up = () => {
-        const av = parseFloat(a.value), pv = parseFloat(p.value), ok = av > 0 && pv > 0;
+        const av = parseFloat(a.value), pv = parseFloat(p.value);
+        const overSell = isSell && av > maxAmt + 1e-9;
+        const ok = av > 0 && pv > 0 && !overSell;
         document.getElementById('sb').disabled = !ok;
-        if (ok) {
+        if (overSell) {
+          document.getElementById('cp').innerHTML = '<div style="background:rgba(255,75,75,.08);border:1px solid rgba(255,75,75,.25);color:var(--red);padding:10px 12px;border-radius:8px;font-size:11px;font-family:var(--mono)">Exceeds available holding (' + maxAmt.toLocaleString("en-US", { maximumFractionDigits: 8 }) + ' ' + c.symbol + ')</div>';
+          return;
+        }
+        if (av > 0 && pv > 0) {
           const total = av * pv; const fee = total * FEE_RATE;
           if (isSell) {
             const buyFee = holding ? holding.avg * av * FEE_RATE : 0;
@@ -1457,7 +1484,7 @@
         const isSell = t.type === 'sell';
         let act; if (S.deleteConfirm === t.id) act = '<div class="del-confirm"><span style="color:var(--red);font-size:12px">Delete?</span><div style="display:flex;gap:6px"><button class="yes-btn" onclick="S.trades=S.trades.filter(x=>x.id!==\'' + t.id + '\');S.deleteConfirm=null;save(true);render()">Yes</button><button class="no-btn" onclick="S.deleteConfirm=null;render()">No</button></div></div>';
         else act = '<div class="actions"><button class="act-btn act-edit" onclick="S.editTradeId=\'' + t.id + '\';S._ei=false;go(\'add\')">✎ Edit</button><button class="act-btn act-del" onclick="S.deleteConfirm=\'' + t.id + '\';render()">✕ Delete</button></div>';
-        h += '<div class="card" style="border-left:3px solid ' + (isSell ? 'var(--red)' : 'var(--green)') + '"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><span class="sym">' + t.symbol + '</span><span class="coin-nm">' + t.name + '</span><span class="trade-badge ' + (isSell ? 'sell' : 'buy') + '">' + (isSell ? 'SELL' : 'BUY') + '</span><div style="font-family:var(--mono);color:var(--text3);font-size:11px;margin-top:3px">' + t.date + '</div>' + (t.notes ? '<div style="font-size:11px;color:var(--text4);margin-top:2px;font-style:italic">' + t.notes + '</div>' : '') + '</div><div style="text-align:right"><div style="font-family:var(--mono);font-size:13px">' + t.amount.toLocaleString("en-US", { maximumFractionDigits: 8 }) + ' ' + t.symbol + '</div><div style="font-family:var(--mono);color:var(--text3);font-size:11px">@ ' + fmt(t.buyPrice) + '</div><div style="font-family:var(--mono);font-size:12px;font-weight:600;margin-top:2px;color:' + (isSell ? 'var(--red)' : 'var(--text)') + '">' + fmt(t.amount * t.buyPrice) + '</div></div></div>' + act + '</div>'
+        h += '<div class="card" style="border-left:3px solid ' + (isSell ? 'var(--red)' : 'var(--green)') + '"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><span class="sym">' + t.symbol + '</span><span class="coin-nm">' + t.name + '</span><span class="trade-badge ' + (isSell ? 'sell' : 'buy') + '">' + (isSell ? 'SELL' : 'BUY') + '</span><div style="font-family:var(--mono);color:var(--text3);font-size:11px;margin-top:3px">' + t.date + '</div>' + (t.notes ? '<div style="font-size:11px;color:var(--text4);margin-top:2px;font-style:italic">' + esc(t.notes) + '</div>' : '') + '</div><div style="text-align:right"><div style="font-family:var(--mono);font-size:13px">' + t.amount.toLocaleString("en-US", { maximumFractionDigits: 8 }) + ' ' + t.symbol + '</div><div style="font-family:var(--mono);color:var(--text3);font-size:11px">@ ' + fmt(t.buyPrice) + '</div><div style="font-family:var(--mono);font-size:12px;font-weight:600;margin-top:2px;color:' + (isSell ? 'var(--red)' : 'var(--text)') + '">' + fmt(t.amount * t.buyPrice) + '</div></div></div>' + act + '</div>'
       });
       el.innerHTML = h
     }
@@ -1482,7 +1509,8 @@
           if (t.type === 'sell') {
             const sellAmt = Math.min(t.amount, qty);
             const avg = qty > 0 ? costBasis / qty : 0;
-            const fee = t.amount * t.buyPrice * FEE_RATE;
+            // Fee scales with actual sold amount (sellAmt), not the user-entered amount.
+            const fee = sellAmt * t.buyPrice * FEE_RATE;
             const buyFeeOnSold = avg * sellAmt * FEE_RATE;
             const r = (t.buyPrice - avg) * sellAmt - fee - buyFeeOnSold;
             const day = (t.date || '').slice(0, 10);
@@ -1495,13 +1523,20 @@
           }
         });
       }
-      // Unrealized daily delta from snapshots. Skip the first snapshot to avoid showing the full cumulative as a single day.
+      // Unrealized daily delta from snapshots. Only attribute change when the previous snapshot
+      // is from the immediately prior day — otherwise multi-day gaps lump into a single cell.
       const unrealByDay = {};
       const allDates = Object.keys(S.pnlHistory).sort();
       for (let i = 1; i < allDates.length; i++) {
-        const cur = S.pnlHistory[allDates[i]].unrealized || 0;
-        const prev = S.pnlHistory[allDates[i - 1]].unrealized || 0;
-        unrealByDay[allDates[i]] = cur - prev;
+        const prevDate = allDates[i - 1], curDate = allDates[i];
+        const [py, pm, pd] = prevDate.split('-').map(Number);
+        const [cy, cm, cd] = curDate.split('-').map(Number);
+        const dayDiff = Math.round((new Date(cy, cm - 1, cd) - new Date(py, pm - 1, pd)) / 86400000);
+        if (dayDiff === 1) {
+          const cur = S.pnlHistory[curDate].unrealized || 0;
+          const prev = S.pnlHistory[prevDate].unrealized || 0;
+          unrealByDay[curDate] = cur - prev;
+        }
       }
       // Parse 'YYYY-MM-DD' as local time. new Date('YYYY-MM-DD') would treat it as UTC midnight,
       // shifting the displayed day by one for users west of UTC. Trade dates come from a local date input.
@@ -1530,14 +1565,13 @@
 
     function renderAna(el) {
       const r = calcPnl(), it = r.holdings; if (!S.trades.length) { el.innerHTML = '<div class="empty"><div style="font-size:48px;color:var(--border);margin-bottom:14px">◔</div><div style="font-size:17px;font-weight:600;margin-bottom:8px">No data</div><div style="font-size:13px;color:var(--text3)">Add trades first</div></div>'; return }
-      const win = it.filter(i => i.pnl + i.realized > 0), lose = it.filter(i => i.pnl + i.realized < 0);
-      const best = it.length ? it.reduce((a, b) => a.pp > b.pp ? a : b) : null;
-      const worst = it.length ? it.reduce((a, b) => a.pp < b.pp ? a : b) : null;
-      const wr = it.length ? (win.length / it.length * 100) : 0;
-      const uc = [...new Set(S.trades.map(t => t.symbol))].length;
+      const win = it.filter(i => i.pnl + i.realized > 0.005), lose = it.filter(i => i.pnl + i.realized < -0.005);
+      // Rank by total return (includes realized), not just unrealized %, so closed winners count.
+      const best = it.length ? it.reduce((a, b) => a.totalRet > b.totalRet ? a : b) : null;
+      const worst = it.length ? it.reduce((a, b) => a.totalRet < b.totalRet ? a : b) : null;
+      // Exclude break-even coins from both numerator AND denominator so the rate represents decided positions.
+      const wr = (win.length + lose.length) ? (win.length / (win.length + lose.length) * 100) : 0;
       const buys = S.trades.filter(t => t.type !== 'sell').length, sells = S.trades.filter(t => t.type === 'sell').length;
-      const dates = S.trades.filter(t => t.type !== 'sell').map(t => new Date(t.date));
-      const avgD = dates.length ? dates.reduce((s, d) => s + Math.floor((Date.now() - d.getTime()) / (864e5)), 0) / dates.length : 0;
       const hk = Object.keys(S.pnlHistory).sort();
       const al = it.filter(i => i.cv > 0).map((x, idx) => ({ ...x, pct: r.totalValue > 0 ? (x.cv / r.totalValue * 100) : 0, clr: COLORS[idx % COLORS.length] }));
       let ab = '<div class="alloc-bar">'; al.forEach(a => { ab += '<div style="width:' + a.pct + '%;background:' + a.clr + '"></div>' }); ab += '</div>';
@@ -1545,8 +1579,8 @@
       let pf = '';[...it].filter(i => i.ta > 0).sort((a, b) => b.pp - a.pp).forEach(i => { pf += '<div class="perf-row"><div><span style="font-weight:600;font-family:var(--mono)">' + i.symbol + '</span><span style="color:var(--text3);margin-left:6px;font-size:11px">' + i.name + '</span></div><div style="text-align:right"><div class="' + col(i.pp) + '" style="font-family:var(--mono);font-size:13px;font-weight:600">' + fmtPct(i.pp) + '</div><div style="font-family:var(--mono);font-size:10px;color:var(--text3)">' + (i.pnl >= 0 ? '+' : '') + fmt(i.pnl) + '</div></div></div>' });
       let snap = ''; hk.slice(-10).forEach(k => { const d = S.pnlHistory[k]; snap += '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px;font-family:var(--mono)"><span style="color:var(--text3)">' + k + '</span><span class="' + col(d.pnl) + '" style="font-weight:600">' + (d.pnl >= 0 ? '+' : '') + fmt(d.pnl) + '</span></div>' });
 
-      el.innerHTML = '<div class="analytics-card"><div class="analytics-title">PORTFOLIO SUMMARY</div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">INVESTED</div><div class="stat-box-val">' + fmt(r.totalCost) + '</div></div><div class="stat-box"><div class="stat-box-label">CURRENT VALUE</div><div class="stat-box-val">' + fmt(r.totalValue) + '</div></div><div class="stat-box"><div class="stat-box-label">REALIZED PNL</div><div class="stat-box-val ' + col(r.realized) + '">' + fmt(r.realized) + '</div><div class="stat-box-sub">after fees · from ' + sells + ' sells</div></div><div class="stat-box"><div class="stat-box-label">UNREALIZED PNL</div><div class="stat-box-val ' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</div><div class="stat-box-sub">after buy fees</div></div></div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">TOTAL PNL</div><div class="stat-box-val ' + col(r.totalPnl) + '">' + fmt(r.totalPnl) + '</div><div class="stat-box-sub">' + fmtPct(r.totalCost > 0 ? (r.totalPnl / r.totalCost) * 100 : 0) + '</div></div><div class="stat-box"><div class="stat-box-label">TOTAL FEES</div><div class="stat-box-val" style="color:var(--yellow)">' + fmt(r.totalFees) + '</div><div class="stat-box-sub">0.075% per side</div></div><div class="stat-box"><div class="stat-box-label">TRADES</div><div class="stat-box-val">' + S.trades.length + '</div><div class="stat-box-sub">' + buys + 'B / ' + sells + 'S</div></div><div class="stat-box"><div class="stat-box-label">WIN RATE</div><div class="stat-box-val ' + (wr >= 50 ? 'green' : 'red') + '">' + wr.toFixed(0) + '%</div><div class="stat-box-sub">' + win.length + 'W / ' + lose.length + 'L</div></div></div></div>' +
-        (it.length && best ? '<div class="analytics-card"><div class="analytics-title">BEST / WORST</div><div style="display:flex;gap:8px"><div style="flex:1;background:rgba(0,255,136,.06);border:1px solid rgba(0,255,136,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--green);font-family:var(--mono);letter-spacing:1px">🏆 BEST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">' + best.symbol + '</div><div class="green" style="font-size:13px;font-family:var(--mono);font-weight:600">' + fmtPct(best.pp) + '</div></div><div style="flex:1;background:rgba(255,75,75,.06);border:1px solid rgba(255,75,75,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--red);font-family:var(--mono);letter-spacing:1px">📉 WORST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">' + worst.symbol + '</div><div class="red" style="font-size:13px;font-family:var(--mono);font-weight:600">' + fmtPct(worst.pp) + '</div></div></div></div>' : '') +
+      el.innerHTML = '<div class="analytics-card"><div class="analytics-title">PORTFOLIO SUMMARY</div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">INVESTED</div><div class="stat-box-val">' + fmt(r.totalBuys) + '</div><div class="stat-box-sub">gross buys all-time</div></div><div class="stat-box"><div class="stat-box-label">CURRENT VALUE</div><div class="stat-box-val">' + fmt(r.totalValue) + '</div></div><div class="stat-box"><div class="stat-box-label">REALIZED PNL</div><div class="stat-box-val ' + col(r.realized) + '">' + fmt(r.realized) + '</div><div class="stat-box-sub">after fees · from ' + sells + ' sells</div></div><div class="stat-box"><div class="stat-box-label">UNREALIZED PNL</div><div class="stat-box-val ' + col(r.unrealized) + '">' + fmt(r.unrealized) + '</div><div class="stat-box-sub">after buy fees</div></div></div><div class="stat-grid"><div class="stat-box"><div class="stat-box-label">TOTAL PNL</div><div class="stat-box-val ' + col(r.totalPnl) + '">' + fmt(r.totalPnl) + '</div><div class="stat-box-sub">' + fmtPct(r.totalBuys > 0 ? (r.totalPnl / r.totalBuys) * 100 : 0) + '</div></div><div class="stat-box"><div class="stat-box-label">TOTAL FEES</div><div class="stat-box-val" style="color:var(--yellow)">' + fmt(r.totalFees) + '</div><div class="stat-box-sub">0.075% per side</div></div><div class="stat-box"><div class="stat-box-label">TRADES</div><div class="stat-box-val">' + S.trades.length + '</div><div class="stat-box-sub">' + buys + 'B / ' + sells + 'S</div></div><div class="stat-box"><div class="stat-box-label">WIN RATE</div><div class="stat-box-val ' + (wr >= 50 ? 'green' : 'red') + '">' + wr.toFixed(0) + '%</div><div class="stat-box-sub">' + win.length + 'W / ' + lose.length + 'L</div></div></div></div>' +
+        (it.length && best ? '<div class="analytics-card"><div class="analytics-title">BEST / WORST</div><div style="display:flex;gap:8px"><div style="flex:1;background:rgba(0,255,136,.06);border:1px solid rgba(0,255,136,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--green);font-family:var(--mono);letter-spacing:1px">🏆 BEST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">' + best.symbol + '</div><div class="' + col(best.totalRet) + '" style="font-size:13px;font-family:var(--mono);font-weight:600">' + fmtPct(best.totalRet) + '</div></div><div style="flex:1;background:rgba(255,75,75,.06);border:1px solid rgba(255,75,75,.15);border-radius:10px;padding:12px"><div style="font-size:8px;color:var(--red);font-family:var(--mono);letter-spacing:1px">📉 WORST</div><div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-top:4px">' + worst.symbol + '</div><div class="' + col(worst.totalRet) + '" style="font-size:13px;font-family:var(--mono);font-weight:600">' + fmtPct(worst.totalRet) + '</div></div></div></div>' : '') +
         (al.length ? '<div class="analytics-card"><div class="analytics-title">ALLOCATION</div>' + ab + ali + '</div>' : '') +
         (pf ? '<div class="analytics-card"><div class="analytics-title">PERFORMANCE RANKING</div>' + pf + '</div>' : '') +
         (snap ? '<div class="analytics-card"><div class="analytics-title">PNL SNAPSHOTS</div>' + snap + '</div>' : '')

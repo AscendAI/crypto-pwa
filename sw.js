@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cryptofolio-v3';
+const CACHE_NAME = 'cryptofolio-v4';
 const ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', e => {
@@ -17,20 +17,16 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  // Network-first for API calls
-  // Skip caching for Firebase and Google auth
-  if (url.hostname.includes('firebaseapp') || url.hostname.includes('googleapis.com') || url.hostname.includes('gstatic.com') || url.hostname.includes('firestore.googleapis.com') || url.hostname.includes('identitytoolkit') || url.hostname.includes('accounts.google')) {
-    e.respondWith(fetch(e.request));
+  // Pass through API and auth — never cache (the previous "cache-fallback" branch never populated the cache).
+  if (url.hostname.includes('coingecko') ||
+      url.hostname.includes('firebaseapp') ||
+      url.hostname.includes('googleapis.com') ||
+      url.hostname.includes('gstatic.com') ||
+      url.hostname.includes('firestore.googleapis.com') ||
+      url.hostname.includes('identitytoolkit') ||
+      url.hostname.includes('accounts.google')) {
     return;
   }
-  if (url.hostname.includes('coingecko') || url.hostname.includes('coincap') || url.hostname.includes('binance')) {
-    e.respondWith(
-      fetch(e.request).catch(() => caches.match(e.request))
-    );
-    return;
-  }
-  // Cache-first for app shell
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request))
-  );
+  // Cache-first for app shell.
+  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
 });
